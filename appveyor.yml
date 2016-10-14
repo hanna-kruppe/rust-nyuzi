@@ -81,10 +81,6 @@ cache:
   - build/%TARGET%/llvm -> src/rustllvm/llvm-auto-clean-trigger
   - "%TARGET%/llvm -> src/rustllvm/llvm-auto-clean-trigger"
 
-branches:
-  only:
-    - auto
-
 # init:
 #   - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
 # on_finish:
