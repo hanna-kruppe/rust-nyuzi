@@ -8,11 +8,6 @@ environment:
     TARGET: i686-pc-windows-msvc
     CHECK: check
 
-  # 64-bit MinGW
-  - MSYS_BITS: 64
-    TARGET: x86_64-pc-windows-gnu
-    CHECK: check
-
   # MSVC rustbuild
   - MSYS_BITS: 64
     CONFIGURE_ARGS: --enable-rustbuild
@@ -25,7 +20,7 @@ environment:
     TARGET: x86_64-pc-windows-msvc
     CHECK: check-cargotest
 
-  # 32-bit MinGW builds.
+  # 32/64-bit MinGW builds.
   #
   # Note that the installed gcc toolchain on AppVeyor uses the pthread threading
   # model. This is unfortunately not what we want, so we download and install
@@ -45,6 +40,13 @@ environment:
     MINGW_URL: https://sourceforge.net/projects/mingw-w64/files/Toolchains%20targetting%20Win32/Personal%20Builds/mingw-builds/4.9.2/threads-win32/dwarf/i686-4.9.2-release-win32-dwarf-rt_v4-rev4.7z/download
     MINGW_ARCHIVE: i686-4.9.2-release-win32-dwarf-rt_v4-rev4.7z
     MINGW_DIR: mingw32
+
+  - MSYS_BITS: 64
+    TARGET: x86_64-pc-windows-gnu
+    CHECK: check
+    MINGW_URL: https://sourceforge.net/projects/mingw-w64/files/Toolchains%20targetting%20Win64/Personal%20Builds/mingw-builds/4.9.2/threads-win32/seh/x86_64-4.9.3-release-win32-seh-rt_v4-rev4.7z/download
+    MINGW_ARCHIVE: x86_64-4.9.2-release-win32-seh-rt_v4-rev4.7z
+    MINGW_DIR: mingw64
 
 clone_depth: 1
 build: false
