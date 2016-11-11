@@ -82,7 +82,7 @@ pub fn llvm(build: &Build, target: &str) {
     // NOTE: remember to also update `config.toml.example` when changing the defaults!
     let llvm_targets = match build.config.llvm_targets {
         Some(ref s) => s,
-        None => "X86;ARM;AArch64;Mips;PowerPC;SystemZ;JSBackend;MSP430;Sparc;NVPTX;Hexagon",
+        None => "X86;ARM;AArch64;Mips;PowerPC;SystemZ;MSP430;Sparc;NVPTX;Hexagon;Nyuzi",
     };
 
     let assertions = if build.config.llvm_assertions {"ON"} else {"OFF"};
