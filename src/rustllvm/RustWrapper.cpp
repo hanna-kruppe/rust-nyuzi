@@ -462,11 +462,17 @@ extern "C" void LLVMRustDIBuilderFinalize(LLVMRustDIBuilderRef Builder) {
 }
 
 extern "C" LLVMRustMetadataRef LLVMRustDIBuilderCreateCompileUnit(
-    LLVMRustDIBuilderRef Builder, unsigned Lang, const char *File,
+    LLVMRustDIBuilderRef Builder, unsigned Lang, const char *FileName,
     const char *Dir, const char *Producer, bool isOptimized, const char *Flags,
     unsigned RuntimeVer, const char *SplitName) {
-  return wrap(Builder->createCompileUnit(Lang, File, Dir, Producer, isOptimized,
+#if LLVM_VERSION_GE(4, 0)
+  DIFile *File = Builder->createFile(FileName, Dir);
+  return wrap(Builder->createCompileUnit(Lang, File, Producer, isOptimized,
                                          Flags, RuntimeVer, SplitName));
+#else
+  return wrap(Builder->createCompileUnit(Lang, FileName, Dir, Producer, isOptimized,
+                                         Flags, RuntimeVer, SplitName));
+#endif
 }
 
 extern "C" LLVMRustMetadataRef
@@ -590,7 +596,11 @@ extern "C" LLVMRustMetadataRef LLVMRustDIBuilderCreateStaticVariable(
   }
 #endif
 
+#if LLVM_VERSION_GE(4, 0)
+  return wrap(Builder->createGlobalVariableExpression(
+#else
   return wrap(Builder->createGlobalVariable(
+#endif
       unwrapDI<DIDescriptor>(Context), Name, LinkageName,
       unwrapDI<DIFile>(File), LineNo, unwrapDI<DIType>(Ty), IsLocalToUnit,
 #if LLVM_VERSION_GE(4, 0)
