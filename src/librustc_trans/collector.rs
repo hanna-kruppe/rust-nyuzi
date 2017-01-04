@@ -212,7 +212,7 @@ use glue::{self, DropGlueKind};
 use monomorphize::{self, Instance};
 use util::nodemap::{FxHashSet, FxHashMap, DefIdMap};
 
-use trans_item::{TransItem, DefPathBasedNames, InstantiationMode};
+use trans_item::{TransItem, TransVariant, DefPathBasedNames, InstantiationMode};
 
 use std::iter;
 
@@ -331,8 +331,8 @@ fn collect_items_rec<'a, 'tcx: 'a>(scx: &SharedCrateContext<'a, 'tcx>,
     let recursion_depth_reset;
 
     match starting_point {
-        TransItem::DropGlue(t) => {
-            find_drop_glue_neighbors(scx, t, &mut neighbors);
+        TransItem::DropGlue(t, variant) => {
+            find_drop_glue_neighbors(scx, t, &mut neighbors, variant);
             recursion_depth_reset = None;
         }
         TransItem::Static(node_id) => {
@@ -343,13 +343,13 @@ fn collect_items_rec<'a, 'tcx: 'a>(scx: &SharedCrateContext<'a, 'tcx>,
 
             let ty = scx.tcx().item_type(def_id);
             let ty = glue::get_drop_glue_type(scx, ty);
-            neighbors.push(TransItem::DropGlue(DropGlueKind::Ty(ty)));
+            neighbors.push(TransItem::DropGlue(DropGlueKind::Ty(ty), TransVariant::todo()));
 
             recursion_depth_reset = None;
 
-            collect_neighbours(scx, Instance::mono(scx, def_id), &mut neighbors);
+            collect_neighbours(scx, Instance::mono(scx, def_id), &mut neighbors, TransVariant::todo());
         }
-        TransItem::Fn(instance) => {
+        TransItem::Fn(instance, variant) => {
             // Sanity check whether this ended up being collected accidentally
             debug_assert!(should_trans_locally(scx.tcx(), instance.def));
 
@@ -359,7 +359,7 @@ fn collect_items_rec<'a, 'tcx: 'a>(scx: &SharedCrateContext<'a, 'tcx>,
                                                                recursion_depths));
             check_type_length_limit(scx.tcx(), instance);
 
-            collect_neighbours(scx, instance, &mut neighbors);
+            collect_neighbours(scx, instance, &mut neighbors, variant);
         }
     }
 
@@ -456,7 +456,8 @@ struct MirNeighborCollector<'a, 'tcx: 'a> {
     scx: &'a SharedCrateContext<'a, 'tcx>,
     mir: &'a mir::Mir<'tcx>,
     output: &'a mut Vec<TransItem<'tcx>>,
-    param_substs: &'tcx Substs<'tcx>
+    param_substs: &'tcx Substs<'tcx>,
+    variant: TransVariant,
 }
 
 impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
@@ -503,7 +504,8 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                         create_fn_trans_item(self.scx,
                                              exchange_malloc_fn_def_id,
                                              empty_substs,
-                                             self.param_substs);
+                                             self.param_substs,
+                                             self.variant);
 
                     self.output.push(exchange_malloc_fn_trans_item);
                 }
@@ -529,7 +531,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                                                       &ty);
             assert!(ty.is_normalized_for_trans());
             let ty = glue::get_drop_glue_type(self.scx, ty);
-            self.output.push(TransItem::DropGlue(DropGlueKind::Ty(ty)));
+            self.output.push(TransItem::DropGlue(DropGlueKind::Ty(ty), self.variant));
         }
 
         self.super_lvalue(lvalue, context, location);
@@ -552,7 +554,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                                                                       &substs);
 
                         let instance = Instance::new(def_id, substs).resolve_const(self.scx);
-                        collect_neighbours(self.scx, instance, self.output);
+                        collect_neighbours(self.scx, instance, self.output, self.variant);
                     }
 
                     None
@@ -592,7 +594,8 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                     let trans_item = create_fn_trans_item(self.scx,
                                                           callee_def_id,
                                                           callee_substs,
-                                                          self.param_substs);
+                                                          self.param_substs,
+                                                          self.variant);
                     self.output.push(trans_item);
 
                     // This call will instantiate an FnOnce adapter, which drops
@@ -602,7 +605,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                         let env_ty = glue::get_drop_glue_type(self.scx, env_ty);
                         if self.scx.type_needs_drop(env_ty) {
                             let dg = DropGlueKind::Ty(env_ty);
-                            self.output.push(TransItem::DropGlue(dg));
+                            self.output.push(TransItem::DropGlue(dg, self.variant));
                         }
                     }
                 }
@@ -659,9 +662,33 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
                                                                               self.param_substs,
                                                                               &mt.ty);
                             let ty = glue::get_drop_glue_type(self.scx, operand_ty);
-                            self.output.push(TransItem::DropGlue(DropGlueKind::Ty(ty)));
+                            self.output.push(TransItem::DropGlue(DropGlueKind::Ty(ty), self.variant));
                         } else {
                             bug!("Has the drop_in_place() intrinsic's signature changed?")
+                        }
+                    }
+                    ty::TyFnDef(def_id, _, bare_fn_ty)
+                        if is_simt16_intrinsic(tcx, def_id, bare_fn_ty) => {
+                        debug!("simt16: inspecting call {:?}", kind);
+                        let callee = match args[0].ty(self.mir, tcx).sty {
+                            ty::TyFnDef(def_id, substs, _) |
+                            ty::TyClosure(def_id, ty::ClosureSubsts { substs }) =>{
+                                Some((def_id, substs))
+                            }
+                            _ => None
+                        };
+
+                        if let Some((callee_def_id, callee_substs)) = callee {
+                            let trans_item = create_fn_trans_item(self.scx,
+                                                                  callee_def_id,
+                                                                  callee_substs,
+                                                                  self.param_substs,
+                                                                  TransVariant { simt: true });
+                            debug!("simt16: found simt root {:?}", trans_item);
+                            self.output.push(trans_item);
+                        } else {
+                            let msg = format!("could not dispatch callee type {:?}", args[0].ty(self.mir, tcx));
+                            tcx.sess.fatal(&msg);
                         }
                     }
                     _ => { /* Nothing to do. */ }
@@ -679,6 +706,14 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
             (bare_fn_ty.abi == Abi::RustIntrinsic ||
              bare_fn_ty.abi == Abi::PlatformIntrinsic) &&
             tcx.item_name(def_id) == "drop_in_place"
+        }
+
+        fn is_simt16_intrinsic<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                                def_id: DefId,
+                                                bare_fn_ty: &ty::BareFnTy<'tcx>)
+                                                -> bool {
+            bare_fn_ty.abi == Abi::RustIntrinsic &&
+            tcx.item_name(def_id) == "simt16"
         }
     }
 }
@@ -708,7 +743,8 @@ fn should_trans_locally<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
 fn find_drop_glue_neighbors<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                                       dg: DropGlueKind<'tcx>,
-                                      output: &mut Vec<TransItem<'tcx>>) {
+                                      output: &mut Vec<TransItem<'tcx>>,
+                                      variant: TransVariant) {
     let ty = match dg {
         DropGlueKind::Ty(ty) => ty,
         DropGlueKind::TyContents(_) => {
@@ -729,7 +765,8 @@ fn find_drop_glue_neighbors<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                 create_fn_trans_item(scx,
                                      def_id,
                                      scx.tcx().mk_substs(iter::once(Kind::from(content_type))),
-                                     scx.tcx().intern_substs(&[]));
+                                     scx.tcx().intern_substs(&[]),
+                                     variant);
             output.push(box_free_fn_trans_item);
         }
     }
@@ -765,13 +802,14 @@ fn find_drop_glue_neighbors<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
             let trans_item = create_fn_trans_item(scx,
                                                   destructor_did,
                                                   substs,
-                                                  scx.tcx().intern_substs(&[]));
+                                                  scx.tcx().intern_substs(&[]),
+                                                  variant);
             output.push(trans_item);
         }
 
         // This type has a Drop implementation, we'll need the contents-only
         // version of the glue too.
-        output.push(TransItem::DropGlue(DropGlueKind::TyContents(ty)));
+        output.push(TransItem::DropGlue(DropGlueKind::TyContents(ty), variant));
     }
 
     // Finally add the types of nested values
@@ -799,7 +837,7 @@ fn find_drop_glue_neighbors<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                 let field_type = glue::get_drop_glue_type(scx, field_type);
 
                 if scx.type_needs_drop(field_type) {
-                    output.push(TransItem::DropGlue(DropGlueKind::Ty(field_type)));
+                    output.push(TransItem::DropGlue(DropGlueKind::Ty(field_type), variant));
                 }
             }
         }
@@ -807,7 +845,7 @@ fn find_drop_glue_neighbors<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
             for upvar_ty in substs.upvar_tys(def_id, scx.tcx()) {
                 let upvar_ty = glue::get_drop_glue_type(scx, upvar_ty);
                 if scx.type_needs_drop(upvar_ty) {
-                    output.push(TransItem::DropGlue(DropGlueKind::Ty(upvar_ty)));
+                    output.push(TransItem::DropGlue(DropGlueKind::Ty(upvar_ty), variant));
                 }
             }
         }
@@ -816,14 +854,14 @@ fn find_drop_glue_neighbors<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
         ty::TyArray(inner_type, _) => {
             let inner_type = glue::get_drop_glue_type(scx, inner_type);
             if scx.type_needs_drop(inner_type) {
-                output.push(TransItem::DropGlue(DropGlueKind::Ty(inner_type)));
+                output.push(TransItem::DropGlue(DropGlueKind::Ty(inner_type), variant));
             }
         }
         ty::TyTuple(args) => {
             for arg in args {
                 let arg = glue::get_drop_glue_type(scx, arg);
                 if scx.type_needs_drop(arg) {
-                    output.push(TransItem::DropGlue(DropGlueKind::Ty(arg)));
+                    output.push(TransItem::DropGlue(DropGlueKind::Ty(arg), variant));
                 }
             }
         }
@@ -1056,14 +1094,16 @@ fn find_vtable_types_for_unsizing<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
 fn create_fn_trans_item<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                                   def_id: DefId,
                                   fn_substs: &'tcx Substs<'tcx>,
-                                  param_substs: &'tcx Substs<'tcx>)
+                                  param_substs: &'tcx Substs<'tcx>,
+                                  variant: TransVariant)
                                   -> TransItem<'tcx> {
     let tcx = scx.tcx();
 
-    debug!("create_fn_trans_item(def_id={}, fn_substs={:?}, param_substs={:?})",
+    debug!("create_fn_trans_item(def_id={}, fn_substs={:?}, param_substs={:?}, variant={:?})",
             def_id_to_string(tcx, def_id),
             fn_substs,
-            param_substs);
+            param_substs,
+            variant);
 
     // We only get here, if fn_def_id either designates a local item or
     // an inlineable external item. Non-inlineable external items are
@@ -1074,7 +1114,7 @@ fn create_fn_trans_item<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
     assert!(concrete_substs.is_normalized_for_trans(),
             "concrete_substs not normalized for trans: {:?}",
             concrete_substs);
-    TransItem::Fn(Instance::new(def_id, concrete_substs))
+    TransItem::Fn(Instance::new(def_id, concrete_substs), variant)
 }
 
 /// Creates a `TransItem` for each method that is referenced by the vtable for
@@ -1084,6 +1124,9 @@ fn create_trans_items_for_vtable_methods<'a, 'tcx>(scx: &SharedCrateContext<'a, 
                                                    impl_ty: ty::Ty<'tcx>,
                                                    output: &mut Vec<TransItem<'tcx>>) {
     assert!(!trait_ty.needs_subst() && !impl_ty.needs_subst());
+    // FIXME(rkruppe) vtables should never be needed in SIMT code, but this is a
+    // hacky way to implement that
+    let variant = TransVariant { simt: false };
 
     if let ty::TyDynamic(ref trait_ty, ..) = trait_ty.sty {
         if let Some(principal) = trait_ty.principal() {
@@ -1107,12 +1150,14 @@ fn create_trans_items_for_vtable_methods<'a, 'tcx>(scx: &SharedCrateContext<'a, 
                     }
                 })
                 .filter(|&(def_id, _)| should_trans_locally(scx.tcx(), def_id))
-                .map(|(def_id, substs)| create_fn_trans_item(scx, def_id, substs, param_substs));
+                .map(|(def_id, substs)| {
+                    create_fn_trans_item(scx, def_id, substs, param_substs, variant)
+                });
             output.extend(methods);
         }
         // Also add the destructor
         let dg_type = glue::get_drop_glue_type(scx, impl_ty);
-        output.push(TransItem::DropGlue(DropGlueKind::Ty(dg_type)));
+        output.push(TransItem::DropGlue(DropGlueKind::Ty(dg_type), variant));
     }
 }
 
@@ -1128,6 +1173,8 @@ struct RootCollector<'b, 'a: 'b, 'tcx: 'a + 'b> {
 
 impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
     fn visit_item(&mut self, item: &'v hir::Item) {
+        // Roots are always scalar code
+        let variant = TransVariant { simt: false };
         match item.node {
             hir::ItemExternCrate(..) |
             hir::ItemUse(..)         |
@@ -1158,7 +1205,7 @@ impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
 
                         let ty = self.scx.tcx().item_type(def_id);
                         let ty = glue::get_drop_glue_type(self.scx, ty);
-                        self.output.push(TransItem::DropGlue(DropGlueKind::Ty(ty)));
+                        self.output.push(TransItem::DropGlue(DropGlueKind::Ty(ty), variant));
                     }
                 }
             }
@@ -1180,7 +1227,7 @@ impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
                            def_id_to_string(self.scx.tcx(), def_id));
 
                     let instance = Instance::mono(self.scx, def_id);
-                    self.output.push(TransItem::Fn(instance));
+                    self.output.push(TransItem::Fn(instance, variant));
                 }
             }
         }
@@ -1218,7 +1265,8 @@ impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
                            def_id_to_string(self.scx.tcx(), def_id));
 
                     let instance = Instance::mono(self.scx, def_id);
-                    self.output.push(TransItem::Fn(instance));
+                    // Roots are always scalar code
+                    self.output.push(TransItem::Fn(instance, TransVariant { simt: false }));
                 }
             }
             _ => { /* Nothing to do here */ }
@@ -1285,7 +1333,8 @@ fn create_trans_items_for_default_impls<'a, 'tcx>(scx: &SharedCrateContext<'a, '
                         let item = create_fn_trans_item(scx,
                                                         method.def_id,
                                                         callee_substs,
-                                                        tcx.erase_regions(&substs));
+                                                        tcx.erase_regions(&substs),
+                                                        TransVariant::todo());
                         output.push(item);
                     }
                 }
@@ -1300,7 +1349,8 @@ fn create_trans_items_for_default_impls<'a, 'tcx>(scx: &SharedCrateContext<'a, '
 /// Scan the MIR in order to find function calls, closures, and drop-glue
 fn collect_neighbours<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                                 instance: Instance<'tcx>,
-                                output: &mut Vec<TransItem<'tcx>>)
+                                output: &mut Vec<TransItem<'tcx>>,
+                                variant: TransVariant)
 {
     let mir = scx.tcx().item_mir(instance.def);
 
@@ -1308,7 +1358,8 @@ fn collect_neighbours<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
         scx: scx,
         mir: &mir,
         output: output,
-        param_substs: instance.substs
+        param_substs: instance.substs,
+        variant: variant,
     };
 
     visitor.visit_mir(&mir);

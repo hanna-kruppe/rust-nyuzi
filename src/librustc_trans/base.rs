@@ -72,7 +72,7 @@ use monomorphize::{self, Instance};
 use partitioning::{self, PartitioningStrategy, CodegenUnit};
 use symbol_map::SymbolMap;
 use symbol_names_test;
-use trans_item::{TransItem, DefPathBasedNames};
+use trans_item::{TransItem, TransVariant, DefPathBasedNames};
 use type_::Type;
 use type_of;
 use value::Value;
@@ -557,7 +557,9 @@ pub fn call_memset<'a, 'tcx>(b: &Builder<'a, 'tcx>,
     b.call(llintrinsicfn, &[ptr, fill_byte, size, align, volatile], None)
 }
 
-pub fn trans_instance<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, instance: Instance<'tcx>) {
+pub fn trans_instance<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+                                instance: Instance<'tcx>,
+                                variant: TransVariant) {
     let _s = if ccx.sess().trans_stats() {
         let mut instance_name = String::new();
         DefPathBasedNames::new(ccx.tcx(), true, true)
@@ -570,7 +572,7 @@ pub fn trans_instance<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, instance: Instance
     // this is an info! to allow collecting monomorphization statistics
     // and to allow finding the last function before LLVM aborts from
     // release builds.
-    info!("trans_instance({})", instance);
+    info!("trans_instance({}, {:?})", instance, variant);
 
     let fn_ty = ccx.tcx().item_type(instance.def);
     let fn_ty = ccx.tcx().erase_regions(&fn_ty);
@@ -579,10 +581,14 @@ pub fn trans_instance<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, instance: Instance
     let ty::BareFnTy { abi, ref sig, .. } = *common::ty_fn_ty(ccx, fn_ty);
     let sig = ccx.tcx().erase_late_bound_regions_and_normalize(sig);
 
-    let lldecl = match ccx.instances().borrow().get(&instance) {
+    let lldecl = match ccx.instances().borrow().get(&(instance, variant)) {
         Some(&val) => val,
         None => bug!("Instance `{:?}` not already declared", instance)
     };
+
+    if variant.simt {
+        attributes::set_simt(lldecl);
+    }
 
     ccx.stats().n_closures.set(ccx.stats().n_closures.get() + 1);
 
@@ -593,7 +599,7 @@ pub fn trans_instance<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, instance: Instance
     let fn_ty = FnType::new(ccx, abi, &sig, &[]);
 
     let mir = ccx.tcx().item_mir(instance.def);
-    mir::trans_mir(ccx, lldecl, fn_ty, &mir, instance, &sig, abi);
+    mir::trans_mir(ccx, lldecl, fn_ty, &mir, instance, &sig, abi, variant);
 }
 
 pub fn trans_ctor_shim<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
@@ -725,13 +731,15 @@ pub fn maybe_create_entry_wrapper(ccx: &CrateContext) {
 
     let instance = Instance::mono(ccx.shared(), main_def_id);
 
-    if !ccx.codegen_unit().contains_item(&TransItem::Fn(instance)) {
+    // The entry point is scalar code
+    let variant = TransVariant { simt: false };
+    if !ccx.codegen_unit().contains_item(&TransItem::Fn(instance, variant)) {
         // We want to create the wrapper in the same codegen unit as Rust's main
         // function.
         return;
     }
 
-    let main_llfn = Callee::def(ccx, main_def_id, instance.substs).reify(ccx);
+    let main_llfn = Callee::def(ccx, main_def_id, instance.substs, variant).reify(ccx);
 
     let et = ccx.sess().entry_type.get().unwrap();
     match et {
@@ -766,7 +774,9 @@ pub fn maybe_create_entry_wrapper(ccx: &CrateContext) {
         let (start_fn, args) = if use_start_lang_item {
             let start_def_id = ccx.tcx().require_lang_item(StartFnLangItem);
             let empty_substs = ccx.tcx().intern_substs(&[]);
-            let start_fn = Callee::def(ccx, start_def_id, empty_substs).reify(ccx);
+            // The entry point is scalar code
+            let variant = TransVariant { simt: false };
+            let start_fn = Callee::def(ccx, start_def_id, empty_substs, variant).reify(ccx);
             (start_fn, vec![bld.pointercast(rust_main, Type::i8p(ccx).ptr_to()), get_param(llfn, 0),
                 get_param(llfn, 1)])
         } else {

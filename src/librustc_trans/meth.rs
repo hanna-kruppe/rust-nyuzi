@@ -19,6 +19,7 @@ use declare;
 use glue;
 use machine;
 use monomorphize::Instance;
+use trans_item::TransVariant;
 use type_::Type;
 use type_of::*;
 use value::Value;
@@ -65,10 +66,14 @@ pub fn trans_object_shim<'a, 'tcx>(ccx: &'a CrateContext<'a, 'tcx>,
                                    -> ValueRef {
     debug!("trans_object_shim({:?})", callee);
 
+    if callee.variant.simt {
+        bug!("trait object in simt code")
+    }
+
     let function_name = match callee.ty.sty {
         ty::TyFnDef(def_id, substs, _) => {
             let instance = Instance::new(def_id, substs);
-            instance.symbol_name(ccx.shared())
+            instance.symbol_name(ccx.shared(), callee.variant)
         }
         _ => bug!()
     };
@@ -138,7 +143,8 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
 
     let mut components: Vec<_> = [
         // Generate a destructor for the vtable.
-        glue::get_drop_glue(ccx, ty),
+        // FIXME(rkruppe) vtable==scalar hack
+        glue::get_drop_glue(ccx, ty, TransVariant { simt: false }),
         C_uint(ccx, size),
         C_uint(ccx, align)
     ].iter().cloned().collect();
@@ -147,7 +153,9 @@ pub fn get_vtable<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         let trait_ref = trait_ref.with_self_ty(tcx, ty);
         let methods = traits::get_vtable_methods(tcx, trait_ref).map(|opt_mth| {
             opt_mth.map_or(nullptr, |(def_id, substs)| {
-                Callee::def(ccx, def_id, substs).reify(ccx)
+                // FIXME(rkruppe) vtable==scalar hack
+                let variant = TransVariant { simt: false };
+                Callee::def(ccx, def_id, substs, variant).reify(ccx)
             })
         });
         components.extend(methods);

@@ -20,6 +20,7 @@ use syntax::ast;
 
 use common::SharedCrateContext;
 use monomorphize::Instance;
+use trans_item::TransVariant;
 
 const SYMBOL_NAME: &'static str = "rustc_symbol_name";
 const ITEM_PATH: &'static str = "rustc_item_path";
@@ -52,7 +53,9 @@ impl<'a, 'tcx> SymbolNamesTest<'a, 'tcx> {
             if attr.check_name(SYMBOL_NAME) {
                 // for now, can only use on monomorphic names
                 let instance = Instance::mono(self.scx, def_id);
-                let name = instance.symbol_name(self.scx);
+                // FIXME(rkruppe) this means we can't test symbol names of simt
+                // functions -- is that needed/useful?
+                let name = instance.symbol_name(self.scx, TransVariant { simt: true });
                 tcx.sess.span_err(attr.span, &format!("symbol-name({})", name));
             } else if attr.check_name(ITEM_PATH) {
                 let path = tcx.item_path_str(def_id);

@@ -17,7 +17,7 @@ use rustc::hir::def_id::DefId;
 use rustc::hir::map as hir_map;
 use {debuginfo, machine};
 use base;
-use trans_item::TransItem;
+use trans_item::{TransItem, TransVariant};
 use common::{CrateContext, val_ty};
 use declare;
 use monomorphize::{Instance};
@@ -43,6 +43,7 @@ pub fn addr_of_mut(ccx: &CrateContext,
                    kind: &str)
                     -> ValueRef {
     unsafe {
+        // globals can't be simt
         let name = ccx.generate_local_symbol_name(kind);
         let gv = declare::define_global(ccx, &name[..], val_ty(cv)).unwrap_or_else(||{
             bug!("symbol `{}` is already defined", name);
@@ -80,7 +81,9 @@ pub fn addr_of(ccx: &CrateContext,
 
 pub fn get_static(ccx: &CrateContext, def_id: DefId) -> ValueRef {
     let instance = Instance::mono(ccx.shared(), def_id);
-    if let Some(&g) = ccx.instances().borrow().get(&instance) {
+    // Statics/consts aren't scalar or vectorized
+    let variant = TransVariant { simt: false };
+    if let Some(&g) = ccx.instances().borrow().get(&(instance, variant)) {
         return g;
     }
 
@@ -113,7 +116,8 @@ pub fn get_static(ccx: &CrateContext, def_id: DefId) -> ValueRef {
             hir_map::NodeForeignItem(&hir::ForeignItem {
                 ref attrs, span, node: hir::ForeignItemStatic(..), ..
             }) => {
-                let sym = instance.symbol_name(ccx.shared());
+                // Foreign code is not subject to simt
+                let sym = instance.symbol_name(ccx.shared(), variant);
                 let g = if let Some(name) =
                         attr::first_attr_value_str_by_name(&attrs, "linkage") {
                     // If this is a static with a linkage specified, then we need to handle
@@ -173,7 +177,7 @@ pub fn get_static(ccx: &CrateContext, def_id: DefId) -> ValueRef {
 
         g
     } else {
-        let sym = instance.symbol_name(ccx.shared());
+        let sym = instance.symbol_name(ccx.shared(), variant);
 
         // FIXME(nagisa): perhaps the map of externs could be offloaded to llvm somehow?
         // FIXME(nagisa): investigate whether it can be changed into define_global
@@ -208,7 +212,7 @@ pub fn get_static(ccx: &CrateContext, def_id: DefId) -> ValueRef {
             llvm::LLVMSetDLLStorageClass(g, llvm::DLLStorageClass::DllImport);
         }
     }
-    ccx.instances().borrow_mut().insert(instance, g);
+    ccx.instances().borrow_mut().insert((instance, variant), g);
     ccx.statics().borrow_mut().insert(g, def_id);
     g
 }

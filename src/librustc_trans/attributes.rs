@@ -68,6 +68,12 @@ pub fn set_frame_pointer_elimination(ccx: &CrateContext, llfn: ValueRef) {
     }
 }
 
+pub fn set_simt(llfn: ValueRef) {
+    llvm::AddFunctionAttrString(
+        llfn, llvm::AttributePlace::Function,
+        cstr("rust-nyuzi-simt\0"));
+}
+
 /// Composite function which sets LLVM attributes for function depending on its AST (#[attribute])
 /// attributes.
 pub fn from_fn_attrs(ccx: &CrateContext, attrs: &[ast::Attribute], llfn: ValueRef) {

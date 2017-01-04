@@ -39,10 +39,21 @@ use std::fmt::Write;
 use std::iter;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
+pub struct TransVariant {
+    pub simt: bool,
+}
+
+impl TransVariant {
+    pub fn todo() -> Self {
+        TransVariant { simt: false }
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub enum TransItem<'tcx> {
-    DropGlue(DropGlueKind<'tcx>),
-    Fn(Instance<'tcx>),
-    Static(NodeId)
+    DropGlue(DropGlueKind<'tcx>, TransVariant),
+    Fn(Instance<'tcx>, TransVariant),
+    Static(NodeId),
 }
 
 /// Describes how a translation item will be instantiated in object files.
@@ -93,14 +104,14 @@ impl<'a, 'tcx> TransItem<'tcx> {
                     span_bug!(item.span, "Mismatch between hir::Item type and TransItem type")
                 }
             }
-            TransItem::Fn(instance) => {
+            TransItem::Fn(instance, variant) => {
                 let _task = ccx.tcx().dep_graph.in_task(
                     DepNode::TransCrateItem(instance.def)); // (*)
 
-                base::trans_instance(&ccx, instance);
+                base::trans_instance(&ccx, instance, variant);
             }
-            TransItem::DropGlue(dg) => {
-                glue::implement_drop_glue(&ccx, dg);
+            TransItem::DropGlue(dg, variant) => {
+                glue::implement_drop_glue(&ccx, dg, variant);
             }
         }
 
@@ -127,11 +138,11 @@ impl<'a, 'tcx> TransItem<'tcx> {
             TransItem::Static(node_id) => {
                 TransItem::predefine_static(ccx, node_id, linkage, &symbol_name);
             }
-            TransItem::Fn(instance) => {
-                TransItem::predefine_fn(ccx, instance, linkage, &symbol_name);
+            TransItem::Fn(instance, variant) => {
+                TransItem::predefine_fn(ccx, instance, linkage, &symbol_name, variant);
             }
-            TransItem::DropGlue(dg) => {
-                TransItem::predefine_drop_glue(ccx, dg, linkage, &symbol_name);
+            TransItem::DropGlue(dg, variant) => {
+                TransItem::predefine_drop_glue(ccx, dg, linkage, &symbol_name, variant);
             }
         }
 
@@ -157,14 +168,16 @@ impl<'a, 'tcx> TransItem<'tcx> {
         unsafe { llvm::LLVMRustSetLinkage(g, linkage) };
 
         let instance = Instance::mono(ccx.shared(), def_id);
-        ccx.instances().borrow_mut().insert(instance, g);
+        let variant = TransVariant { simt: false }; // statics are scalar
+        ccx.instances().borrow_mut().insert((instance, variant), g);
         ccx.statics().borrow_mut().insert(g, def_id);
     }
 
     fn predefine_fn(ccx: &CrateContext<'a, 'tcx>,
                     instance: Instance<'tcx>,
                     linkage: llvm::Linkage,
-                    symbol_name: &str) {
+                    symbol_name: &str,
+                    variant: TransVariant) {
         assert!(!instance.substs.needs_infer() &&
                 !instance.substs.has_param_types());
 
@@ -188,13 +201,14 @@ impl<'a, 'tcx> TransItem<'tcx> {
 
         attributes::from_fn_attrs(ccx, &attrs, lldecl);
 
-        ccx.instances().borrow_mut().insert(instance, lldecl);
+        ccx.instances().borrow_mut().insert((instance, variant), lldecl);
     }
 
     fn predefine_drop_glue(ccx: &CrateContext<'a, 'tcx>,
                            dg: glue::DropGlueKind<'tcx>,
                            linkage: llvm::Linkage,
-                           symbol_name: &str) {
+                           symbol_name: &str,
+                           variant: TransVariant) {
         let tcx = ccx.tcx();
         assert_eq!(dg.ty(), glue::get_drop_glue_type(ccx.shared(), dg.ty()));
         let t = dg.ty();
@@ -214,21 +228,22 @@ impl<'a, 'tcx> TransItem<'tcx> {
             llvm::SetUniqueComdat(ccx.llmod(), llfn);
         }
         attributes::set_frame_pointer_elimination(ccx, llfn);
-        ccx.drop_glues().borrow_mut().insert(dg, (llfn, fn_ty));
+        ccx.drop_glues().borrow_mut().insert((dg, variant), (llfn, fn_ty));
     }
 
     pub fn compute_symbol_name(&self,
                                scx: &SharedCrateContext<'a, 'tcx>) -> String {
         match *self {
-            TransItem::Fn(instance) => instance.symbol_name(scx),
+            TransItem::Fn(instance, variant) => instance.symbol_name(scx, variant),
             TransItem::Static(node_id) => {
                 let def_id = scx.tcx().map.local_def_id(node_id);
-                Instance::mono(scx, def_id).symbol_name(scx)
+                Instance::mono(scx, def_id).symbol_name(scx, TransVariant { simt: false })
             }
-            TransItem::DropGlue(dg) => {
+            TransItem::DropGlue(dg, TransVariant { simt }) => {
                 let prefix = match dg {
-                    DropGlueKind::Ty(_) => "drop",
-                    DropGlueKind::TyContents(_) => "drop_contents",
+                    DropGlueKind::Ty(_) => if simt { "simt_drop" } else { "drop" },
+                    DropGlueKind::TyContents(_) => 
+                        if simt { "simt_drop_contents" } else { "drop_contents" },
                 };
                 symbol_names::exported_name_from_type_and_prefix(scx, dg.ty(), prefix)
             }
@@ -237,7 +252,7 @@ impl<'a, 'tcx> TransItem<'tcx> {
 
     pub fn is_from_extern_crate(&self) -> bool {
         match *self {
-            TransItem::Fn(ref instance) => !instance.def.is_local(),
+            TransItem::Fn(ref instance, _) => !instance.def.is_local(),
             TransItem::DropGlue(..) |
             TransItem::Static(..)   => false,
         }
@@ -247,7 +262,8 @@ impl<'a, 'tcx> TransItem<'tcx> {
                               tcx: TyCtxt<'a, 'tcx, 'tcx>)
                               -> InstantiationMode {
         match *self {
-            TransItem::Fn(ref instance) => {
+            TransItem::Fn(ref instance, _) => {
+                // FIXME(rkruppe) should SIMT code be instantiated on-demand?
                 if self.explicit_linkage(tcx).is_none() &&
                    (common::is_closure(tcx, instance.def) ||
                     attr::requests_inline(&tcx.get_attrs(instance.def)[..])) {
@@ -263,7 +279,7 @@ impl<'a, 'tcx> TransItem<'tcx> {
 
     pub fn is_generic_fn(&self) -> bool {
         match *self {
-            TransItem::Fn(ref instance) => {
+            TransItem::Fn(ref instance, _) => {
                 instance.substs.types().next().is_some()
             }
             TransItem::DropGlue(..) |
@@ -273,7 +289,7 @@ impl<'a, 'tcx> TransItem<'tcx> {
 
     pub fn explicit_linkage(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> Option<llvm::Linkage> {
         let def_id = match *self {
-            TransItem::Fn(ref instance) => instance.def,
+            TransItem::Fn(ref instance, _) => instance.def,
             TransItem::Static(node_id) => tcx.map.local_def_id(node_id),
             TransItem::DropGlue(..) => return None,
         };
@@ -299,8 +315,11 @@ impl<'a, 'tcx> TransItem<'tcx> {
         let hir_map = &tcx.map;
 
         return match *self {
-            TransItem::DropGlue(dg) => {
+            TransItem::DropGlue(dg, TransVariant { simt }) => {
                 let mut s = String::with_capacity(32);
+                if simt {
+                    s.push_str("simt ");
+                }
                 match dg {
                     DropGlueKind::Ty(_) => s.push_str("drop-glue "),
                     DropGlueKind::TyContents(_) => s.push_str("drop-glue-contents "),
@@ -309,41 +328,47 @@ impl<'a, 'tcx> TransItem<'tcx> {
                 printer.push_type_name(dg.ty(), &mut s);
                 s
             }
-            TransItem::Fn(instance) => {
-                to_string_internal(tcx, "fn ", instance)
+            TransItem::Fn(instance, TransVariant { simt }) => {
+                let suffix = if simt { "[simt]" } else { "" };
+                to_string_internal(tcx, "fn ", instance, suffix)
             },
             TransItem::Static(node_id) => {
                 let def_id = hir_map.local_def_id(node_id);
                 let instance = Instance::new(def_id, tcx.intern_substs(&[]));
-                to_string_internal(tcx, "static ", instance)
+                to_string_internal(tcx, "static ", instance, "")
             },
         };
 
         fn to_string_internal<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                         prefix: &str,
-                                        instance: Instance<'tcx>)
+                                        instance: Instance<'tcx>,
+                                        suffix: &str)
                                         -> String {
             let mut result = String::with_capacity(32);
             result.push_str(prefix);
             let printer = DefPathBasedNames::new(tcx, false, false);
             printer.push_instance_as_string(instance, &mut result);
+            result.push_str(suffix);
             result
         }
     }
 
     pub fn to_raw_string(&self) -> String {
         match *self {
-            TransItem::DropGlue(dg) => {
+            TransItem::DropGlue(dg, variant) => {
                 let prefix = match dg {
                     DropGlueKind::Ty(_) => "Ty",
                     DropGlueKind::TyContents(_) => "TyContents",
                 };
-                format!("DropGlue({}: {})", prefix, dg.ty() as *const _ as usize)
+                let variant = if variant.simt { "simt" } else { "scalar" };
+                format!("DropGlue({}: {}, {})", prefix, dg.ty() as *const _ as usize, variant)
             }
-            TransItem::Fn(instance) => {
-                format!("Fn({:?}, {})",
+            TransItem::Fn(instance, variant) => {
+                let variant = if variant.simt { "simt" } else { "scalar" };
+                format!("Fn({:?}, {}, {})",
                          instance.def,
-                         instance.substs.as_ptr() as usize)
+                         instance.substs.as_ptr() as usize,
+                         variant)
             }
             TransItem::Static(id) => {
                 format!("Static({:?})", id)

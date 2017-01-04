@@ -34,6 +34,7 @@ use monomorphize::{self, Instance};
 use type_of;
 use type_::Type;
 use value::Value;
+use trans_item::TransVariant;
 
 use syntax_pos::Span;
 
@@ -215,7 +216,9 @@ struct MirConstContext<'a, 'tcx: 'a> {
     substs: &'tcx Substs<'tcx>,
 
     /// Values of locals in a constant or const fn.
-    locals: IndexVec<mir::Local, Option<Const<'tcx>>>
+    locals: IndexVec<mir::Local, Option<Const<'tcx>>>,
+
+    variant: TransVariant,
 }
 
 
@@ -223,13 +226,15 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
     fn new(ccx: &'a CrateContext<'a, 'tcx>,
            mir: &'a mir::Mir<'tcx>,
            substs: &'tcx Substs<'tcx>,
-           args: IndexVec<mir::Local, Const<'tcx>>)
+           args: IndexVec<mir::Local, Const<'tcx>>,
+           variant: TransVariant)
            -> MirConstContext<'a, 'tcx> {
         let mut context = MirConstContext {
             ccx: ccx,
             mir: mir,
             substs: substs,
             locals: (0..mir.local_decls.len()).map(|_| None).collect(),
+            variant: variant,
         };
         for (i, arg) in args.into_iter().enumerate() {
             // Locals after local 0 are the function arguments
@@ -241,11 +246,12 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
 
     fn trans_def(ccx: &'a CrateContext<'a, 'tcx>,
                  instance: Instance<'tcx>,
-                 args: IndexVec<mir::Local, Const<'tcx>>)
+                 args: IndexVec<mir::Local, Const<'tcx>>,
+                 variant: TransVariant)
                  -> Result<Const<'tcx>, ConstEvalErr> {
         let instance = instance.resolve_const(ccx.shared());
         let mir = ccx.tcx().item_mir(instance.def);
-        MirConstContext::new(ccx, &mir, instance.substs, args).trans()
+        MirConstContext::new(ccx, &mir, instance.substs, args, variant).trans()
     }
 
     fn monomorphize<T>(&self, value: &T) -> T
@@ -342,7 +348,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                         }
                     }
                     if let Some((ref dest, target)) = *destination {
-                        match MirConstContext::trans_def(self.ccx, instance, const_args) {
+                        match MirConstContext::trans_def(self.ccx, instance, const_args, self.variant) {
                             Ok(value) => self.store(dest, value, span),
                             Err(err) => if failure.is_ok() { failure = Err(err); }
                         }
@@ -480,11 +486,12 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
 
                         let substs = self.monomorphize(&substs);
                         let instance = Instance::new(def_id, substs);
-                        MirConstContext::trans_def(self.ccx, instance, IndexVec::new())
+                        MirConstContext::trans_def(self.ccx, instance, IndexVec::new(), self.variant)
                     }
                     mir::Literal::Promoted { index } => {
                         let mir = &self.mir.promoted[index];
-                        MirConstContext::new(self.ccx, mir, self.substs, IndexVec::new()).trans()
+                        MirConstContext::new(self.ccx,mir, self.substs,
+                                             IndexVec::new(), self.variant).trans()
                     }
                     mir::Literal::Value { value } => {
                         Ok(Const::from_constval(self.ccx, value, ty))
@@ -561,7 +568,7 @@ impl<'a, 'tcx> MirConstContext<'a, 'tcx> {
                     mir::CastKind::ReifyFnPointer => {
                         match operand.ty.sty {
                             ty::TyFnDef(def_id, substs, _) => {
-                                Callee::def(self.ccx, def_id, substs)
+                                Callee::def(self.ccx, def_id, substs, self.variant)
                                     .reify(self.ccx)
                             }
                             _ => {
@@ -892,7 +899,8 @@ pub fn const_scalar_checked_binop<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 impl<'a, 'tcx> MirContext<'a, 'tcx> {
     pub fn trans_constant(&mut self,
                           bcx: &Builder<'a, 'tcx>,
-                          constant: &mir::Constant<'tcx>)
+                          constant: &mir::Constant<'tcx>,
+                          variant: TransVariant)
                           -> Const<'tcx>
     {
         debug!("trans_constant({:?})", constant);
@@ -908,11 +916,11 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
 
                 let substs = self.monomorphize(&substs);
                 let instance = Instance::new(def_id, substs);
-                MirConstContext::trans_def(bcx.ccx, instance, IndexVec::new())
+                MirConstContext::trans_def(bcx.ccx, instance, IndexVec::new(), variant)
             }
             mir::Literal::Promoted { index } => {
                 let mir = &self.mir.promoted[index];
-                MirConstContext::new(bcx.ccx, mir, self.param_substs, IndexVec::new()).trans()
+                MirConstContext::new(bcx.ccx, mir, self.param_substs, IndexVec::new(), variant).trans()
             }
             mir::Literal::Value { value } => {
                 Ok(Const::from_constval(bcx.ccx, value, ty))
@@ -934,7 +942,9 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
 pub fn trans_static_initializer(ccx: &CrateContext, def_id: DefId)
                                 -> Result<ValueRef, ConstEvalErr> {
     let instance = Instance::mono(ccx.shared(), def_id);
-    MirConstContext::trans_def(ccx, instance, IndexVec::new()).map(|c| c.llval)
+    // FIXME(rkruppe) statics==scalar OK?
+    let variant = TransVariant { simt: false };
+    MirConstContext::trans_def(ccx, instance, IndexVec::new(), variant).map(|c| c.llval)
 }
 
 /// Construct a constant value, suitable for initializing a

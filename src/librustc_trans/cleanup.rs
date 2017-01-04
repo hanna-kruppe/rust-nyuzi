@@ -26,6 +26,7 @@ use builder::Builder;
 use common::Funclet;
 use glue;
 use type_::Type;
+use trans_item::TransVariant;
 
 pub struct CleanupScope<'tcx> {
     // Cleanup to run upon scope exit.
@@ -33,6 +34,8 @@ pub struct CleanupScope<'tcx> {
 
     // Computed on creation if compiling with landing pads (!sess.no_landing_pads)
     pub landing_pad: Option<BasicBlockRef>,
+
+    variant: TransVariant,
 }
 
 #[derive(Copy, Clone)]
@@ -42,8 +45,9 @@ pub struct DropValue<'tcx> {
 }
 
 impl<'tcx> DropValue<'tcx> {
-    fn trans<'a>(&self, funclet: Option<&'a Funclet>, bcx: &Builder<'a, 'tcx>) {
-        glue::call_drop_glue(bcx, self.val, self.skip_dtor, funclet)
+    fn trans<'a>(&self, funclet: Option<&'a Funclet>,
+                 bcx: &Builder<'a, 'tcx>, variant: TransVariant) {
+        glue::call_drop_glue(bcx, self.val, self.skip_dtor, funclet, variant)
     }
 
     /// Creates a landing pad for the top scope. The landing pad will perform all cleanups necessary
@@ -52,7 +56,10 @@ impl<'tcx> DropValue<'tcx> {
     ///     landing_pad -> ... cleanups ... -> [resume]
     ///
     /// This should only be called once per function, as it creates an alloca for the landingpad.
-    fn get_landing_pad<'a>(&self, bcx: &Builder<'a, 'tcx>) -> BasicBlockRef {
+    fn get_landing_pad<'a>(&self,
+                           bcx: &Builder<'a, 'tcx>,
+                           variant: TransVariant)
+                           -> BasicBlockRef {
         debug!("get_landing_pad");
         let bcx = bcx.build_sibling_block("cleanup_unwind");
         let llpersonality = bcx.ccx.eh_personality();
@@ -61,7 +68,7 @@ impl<'tcx> DropValue<'tcx> {
         if base::wants_msvc_seh(bcx.sess()) {
             let pad = bcx.cleanup_pad(None, &[]);
             let funclet = Some(Funclet::new(pad));
-            self.trans(funclet.as_ref(), &bcx);
+            self.trans(funclet.as_ref(), &bcx, variant);
 
             bcx.cleanup_ret(pad, None);
         } else {
@@ -77,7 +84,7 @@ impl<'tcx> DropValue<'tcx> {
             bcx.set_cleanup(llretval);
 
             // Insert cleanup instructions into the cleanup block
-            self.trans(None, &bcx);
+            self.trans(None, &bcx, variant);
 
             if !bcx.sess().target.target.options.custom_unwind_resume {
                 bcx.resume(llretval);
@@ -95,7 +102,7 @@ impl<'tcx> DropValue<'tcx> {
 impl<'a, 'tcx> CleanupScope<'tcx> {
     /// Schedules a (deep) drop of `val`, which is a pointer to an instance of `ty`
     pub fn schedule_drop_mem(
-        bcx: &Builder<'a, 'tcx>, val: LvalueRef<'tcx>
+        bcx: &Builder<'a, 'tcx>, val: LvalueRef<'tcx>, variant: TransVariant
     ) -> CleanupScope<'tcx> {
         if let LvalueTy::Downcast { .. } = val.ty {
             bug!("Cannot drop downcast ty yet");
@@ -108,7 +115,7 @@ impl<'a, 'tcx> CleanupScope<'tcx> {
             skip_dtor: false,
         };
 
-        CleanupScope::new(bcx, drop)
+        CleanupScope::new(bcx, drop, variant)
     }
 
     /// Issue #23611: Schedules a (deep) drop of the contents of
@@ -117,7 +124,7 @@ impl<'a, 'tcx> CleanupScope<'tcx> {
     /// and dropping the contents associated with that variant
     /// *without* executing any associated drop implementation.
     pub fn schedule_drop_adt_contents(
-        bcx: &Builder<'a, 'tcx>, val: LvalueRef<'tcx>
+        bcx: &Builder<'a, 'tcx>, val: LvalueRef<'tcx>, variant: TransVariant
     ) -> CleanupScope<'tcx> {
         if let LvalueTy::Downcast { .. } = val.ty {
             bug!("Cannot drop downcast ty yet");
@@ -133,17 +140,20 @@ impl<'a, 'tcx> CleanupScope<'tcx> {
             skip_dtor: true,
         };
 
-        CleanupScope::new(bcx, drop)
+        CleanupScope::new(bcx, drop, variant)
     }
 
-    fn new(bcx: &Builder<'a, 'tcx>, drop_val: DropValue<'tcx>) -> CleanupScope<'tcx> {
+    fn new(
+        bcx: &Builder<'a, 'tcx>, drop_val: DropValue<'tcx>, variant: TransVariant
+    ) -> CleanupScope<'tcx> {
         CleanupScope {
             cleanup: Some(drop_val),
             landing_pad: if !bcx.sess().no_landing_pads() {
-                Some(drop_val.get_landing_pad(bcx))
+                Some(drop_val.get_landing_pad(bcx, variant))
             } else {
                 None
             },
+            variant: variant,
         }
     }
 
@@ -151,12 +161,13 @@ impl<'a, 'tcx> CleanupScope<'tcx> {
         CleanupScope {
             cleanup: None,
             landing_pad: None,
+            variant: TransVariant { simt: false } // doesn't matter
         }
     }
 
     pub fn trans(self, bcx: &'a Builder<'a, 'tcx>) {
         if let Some(cleanup) = self.cleanup {
-            cleanup.trans(None, &bcx);
+            cleanup.trans(None, &bcx, self.variant);
         }
     }
 }

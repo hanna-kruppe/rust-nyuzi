@@ -25,6 +25,7 @@ use debuginfo::{self, declare_local, VariableAccess, VariableKind, FunctionDebug
 use monomorphize::{self, Instance};
 use abi::FnType;
 use type_of;
+use trans_item::TransVariant;
 
 use syntax_pos::{DUMMY_SP, NO_EXPANSION, COMMAND_LINE_EXPN, BytePos, Span};
 use syntax::symbol::keywords;
@@ -206,6 +207,7 @@ pub fn trans_mir<'a, 'tcx: 'a>(
     instance: Instance<'tcx>,
     sig: &ty::FnSig<'tcx>,
     abi: Abi,
+    variant: TransVariant,
 ) {
     debug!("fn_ty: {:?}", fn_ty);
     let debug_context =
@@ -334,7 +336,7 @@ pub fn trans_mir<'a, 'tcx: 'a>(
     // Translate the body of each block using reverse postorder
     for (bb, _) in rpo {
         visited.insert(bb.index());
-        mircx.trans_block(bb, &funclets);
+        mircx.trans_block(bb, &funclets, variant);
     }
 
     // Remove blocks that haven't been visited, or have no

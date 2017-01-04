@@ -79,6 +79,16 @@ pub fn AddFunctionAttrStringValue(llfn: ValueRef,
     }
 }
 
+pub fn AddFunctionAttrString(llfn: ValueRef,
+                             idx: AttributePlace,
+                             attr: &CStr) {
+    unsafe {
+        LLVMRustAddFunctionAttrString(llfn,
+                                      idx.as_uint(),
+                                      attr.as_ptr())
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub enum AttributePlace {

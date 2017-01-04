@@ -199,6 +199,15 @@ extern "C" void LLVMRustAddFunctionAttrStringValue(LLVMValueRef Fn,
   F->addAttributes(Index, AttributeSet::get(F->getContext(), Index, B));
 }
 
+extern "C" void LLVMRustAddFunctionAttrString(LLVMValueRef Fn,
+                                              unsigned Index,
+                                              const char *Name) {
+  Function *F = unwrap<Function>(Fn);
+  AttrBuilder B;
+  B.addAttribute(Name);
+  F->addAttributes(Index, AttributeSet::get(F->getContext(), Index, B));
+}
+
 extern "C" void LLVMRustRemoveFunctionAttributes(LLVMValueRef Fn,
                                                  unsigned Index,
                                                  LLVMRustAttribute RustAttr) {

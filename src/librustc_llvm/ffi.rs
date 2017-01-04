@@ -697,6 +697,9 @@ extern "C" {
                                               index: c_uint,
                                               Name: *const c_char,
                                               Value: *const c_char);
+    pub fn LLVMRustAddFunctionAttrString(Fn: ValueRef,
+                                         index: c_uint,
+                                         Name: *const c_char);
     pub fn LLVMRustRemoveFunctionAttributes(Fn: ValueRef, index: c_uint, attr: Attribute);
 
     // Operations on parameters

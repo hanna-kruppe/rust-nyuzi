@@ -40,10 +40,12 @@ use super::constant::Const;
 use super::lvalue::LvalueRef;
 use super::operand::OperandRef;
 use super::operand::OperandValue::{Pair, Ref, Immediate};
+use trans_item::TransVariant;
 
 impl<'a, 'tcx> MirContext<'a, 'tcx> {
     pub fn trans_block(&mut self, bb: mir::BasicBlock,
-        funclets: &IndexVec<mir::BasicBlock, Option<Funclet>>) {
+        funclets: &IndexVec<mir::BasicBlock, Option<Funclet>>,
+        variant: TransVariant) {
         let mut bcx = self.get_builder(bb);
         let data = &self.mir[bb];
 
@@ -106,7 +108,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
         };
 
         for statement in &data.statements {
-            bcx = self.trans_statement(bcx, statement);
+            bcx = self.trans_statement(bcx, statement, variant);
         }
 
         let terminator = data.terminator();
@@ -137,7 +139,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
             }
 
             mir::TerminatorKind::If { ref cond, targets: (true_bb, false_bb) } => {
-                let cond = self.trans_operand(&bcx, cond);
+                let cond = self.trans_operand(&bcx, cond, variant);
 
                 let lltrue = llblock(self, true_bb);
                 let llfalse = llblock(self, false_bb);
@@ -145,7 +147,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
             }
 
             mir::TerminatorKind::Switch { ref discr, ref adt_def, ref targets } => {
-                let discr_lvalue = self.trans_lvalue(&bcx, discr);
+                let discr_lvalue = self.trans_lvalue(&bcx, discr, variant);
                 let ty = discr_lvalue.ty.to_ty(bcx.tcx());
                 let discr = adt::trans_get_discr(&bcx, ty, discr_lvalue.llval, None, true);
 
@@ -179,7 +181,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
 
             mir::TerminatorKind::SwitchInt { ref discr, switch_ty, ref values, ref targets } => {
                 let (otherwise, targets) = targets.split_last().unwrap();
-                let discr = bcx.load(self.trans_lvalue(&bcx, discr).llval);
+                let discr = bcx.load(self.trans_lvalue(&bcx, discr, variant).llval);
                 let discr = base::to_immediate(&bcx, discr, switch_ty);
                 let switch = bcx.switch(discr, llblock(self, *otherwise), values.len());
                 for (value, target) in values.iter().zip(targets) {
@@ -222,7 +224,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                     }
                     load
                 } else {
-                    let op = self.trans_consume(&bcx, &mir::Lvalue::Local(mir::RETURN_POINTER));
+                    let op = self.trans_consume(&bcx, &mir::Lvalue::Local(mir::RETURN_POINTER), variant);
                     if let Ref(llval) = op.val {
                         base::load_ty(&bcx, llval, op.ty)
                     } else {
@@ -246,8 +248,8 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                     return;
                 }
 
-                let mut lvalue = self.trans_lvalue(&bcx, location);
-                let drop_fn = glue::get_drop_glue(bcx.ccx, ty);
+                let mut lvalue = self.trans_lvalue(&bcx, location, variant);
+                let drop_fn = glue::get_drop_glue(bcx.ccx, ty, variant);
                 let drop_ty = glue::get_drop_glue_type(bcx.ccx.shared(), ty);
                 if bcx.ccx.shared().type_is_sized(ty) && drop_ty != ty {
                     lvalue.llval = bcx.pointercast(
@@ -269,7 +271,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
             }
 
             mir::TerminatorKind::Assert { ref cond, expected, ref msg, target, cleanup } => {
-                let cond = self.trans_operand(&bcx, cond).immediate();
+                let cond = self.trans_operand(&bcx, cond, variant).immediate();
                 let mut const_cond = common::const_to_opt_u128(cond, false).map(|c| c == 1);
 
                 // This case can currently arise only from functions marked
@@ -320,8 +322,8 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 // Put together the arguments to the panic entry point.
                 let (lang_item, args, const_err) = match *msg {
                     mir::AssertMessage::BoundsCheck { ref len, ref index } => {
-                        let len = self.trans_operand(&mut bcx, len).immediate();
-                        let index = self.trans_operand(&mut bcx, index).immediate();
+                        let len = self.trans_operand(&mut bcx, len, variant).immediate();
+                        let index = self.trans_operand(&mut bcx, index, variant).immediate();
 
                         let const_err = common::const_to_opt_u128(len, false)
                             .and_then(|len| common::const_to_opt_u128(index, false)
@@ -372,7 +374,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 // Obtain the panic entry point.
                 let def_id = common::langcall(bcx.tcx(), Some(span), "", lang_item);
                 let callee = Callee::def(bcx.ccx, def_id,
-                    bcx.ccx.empty_substs_for_def_id(def_id));
+                    bcx.ccx.empty_substs_for_def_id(def_id), variant);
                 let llfn = callee.reify(bcx.ccx);
 
                 // Translate the actual panic invoke/call.
@@ -394,16 +396,17 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
 
             mir::TerminatorKind::Call { ref func, ref args, ref destination, ref cleanup } => {
                 // Create the callee. This is a fn ptr or zero-sized and hence a kind of scalar.
-                let callee = self.trans_operand(&bcx, func);
+                let callee = self.trans_operand(&bcx, func, variant);
 
                 let (mut callee, abi, sig) = match callee.ty.sty {
                     ty::TyFnDef(def_id, substs, f) => {
-                        (Callee::def(bcx.ccx, def_id, substs), f.abi, &f.sig)
+                        (Callee::def(bcx.ccx, def_id, substs, variant), f.abi, &f.sig)
                     }
                     ty::TyFnPtr(f) => {
                         (Callee {
                             data: Fn(callee.immediate()),
-                            ty: callee.ty
+                            ty: callee.ty,
+                            variant: variant
                         }, f.abi, &f.sig)
                     }
                     _ => bug!("{} is not callable", callee.ty)
@@ -423,8 +426,8 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 if intrinsic == Some("move_val_init") {
                     let &(_, target) = destination.as_ref().unwrap();
                     // The first argument is a thin destination pointer.
-                    let llptr = self.trans_operand(&bcx, &args[0]).immediate();
-                    let val = self.trans_operand(&bcx, &args[1]);
+                    let llptr = self.trans_operand(&bcx, &args[0], variant).immediate();
+                    let val = self.trans_operand(&bcx, &args[1], variant);
                     self.store_operand(&bcx, llptr, val, None);
                     funclet_br(self, bcx, target);
                     return;
@@ -432,8 +435,8 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
 
                 if intrinsic == Some("transmute") {
                     let &(ref dest, target) = destination.as_ref().unwrap();
-                    self.with_lvalue_ref(&bcx, dest, |this, dest| {
-                        this.trans_transmute(&bcx, &args[0], dest);
+                    self.with_lvalue_ref(&bcx, dest, variant, |this, dest| {
+                        this.trans_transmute(&bcx, &args[0], dest, variant);
                     });
 
                     funclet_br(self, bcx, target);
@@ -461,7 +464,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                         return;
                     }
 
-                    let drop_fn = glue::get_drop_glue(bcx.ccx, ty);
+                    let drop_fn = glue::get_drop_glue(bcx.ccx, ty, variant);
                     let llty = fn_ty.llvm_type(bcx.ccx).ptr_to();
                     callee.data = Fn(bcx.pointercast(drop_fn, llty));
                     intrinsic = None;
@@ -478,7 +481,8 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                     } else {
                         false
                     };
-                    self.make_return_dest(&bcx, dest, &fn_ty.ret, &mut llargs, is_intrinsic)
+                    self.make_return_dest(&bcx, dest, &fn_ty.ret, &mut llargs,
+                                          is_intrinsic, variant)
                 } else {
                     ReturnDest::Nothing
                 };
@@ -506,7 +510,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                                 span_bug!(span, "shuffle indices must be constant");
                             }
                             mir::Operand::Constant(ref constant) => {
-                                let val = self.trans_constant(&bcx, constant);
+                                let val = self.trans_constant(&bcx, constant, variant);
                                 llargs.push(val.llval);
                                 idx += 1;
                                 continue;
@@ -514,13 +518,13 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                         }
                     }
 
-                    let op = self.trans_operand(&bcx, arg);
+                    let op = self.trans_operand(&bcx, arg, variant);
                     self.trans_argument(&bcx, op, &mut llargs, &fn_ty,
                                         &mut idx, &mut callee.data);
                 }
                 if let Some(tup) = untuple {
                     self.trans_arguments_untupled(&bcx, tup, &mut llargs, &fn_ty,
-                                                  &mut idx, &mut callee.data)
+                                                  &mut idx, &mut callee.data, variant)
                 }
 
                 let fn_ptr = match callee.data {
@@ -545,7 +549,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                         };
 
                         trans_intrinsic_call(&bcx, callee.ty, &fn_ty, &llargs, dest,
-                            terminator.source_info.span);
+                            terminator.source_info.span, variant);
 
                         if let ReturnDest::IndirectOperand(dst, _) = ret_dest {
                             // Make a fake operand for store_return
@@ -691,8 +695,9 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                                 llargs: &mut Vec<ValueRef>,
                                 fn_ty: &FnType,
                                 next_idx: &mut usize,
-                                callee: &mut CalleeData) {
-        let tuple = self.trans_operand(bcx, operand);
+                                callee: &mut CalleeData,
+                                variant: TransVariant) {
+        let tuple = self.trans_operand(bcx, operand, variant);
 
         let arg_types = match tuple.ty.sty {
             ty::TyTuple(ref tys) => tys,
@@ -824,7 +829,8 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
 
     fn make_return_dest(&mut self, bcx: &Builder<'a, 'tcx>,
                         dest: &mir::Lvalue<'tcx>, fn_ret_ty: &ArgType,
-                        llargs: &mut Vec<ValueRef>, is_intrinsic: bool) -> ReturnDest {
+                        llargs: &mut Vec<ValueRef>, is_intrinsic: bool,
+                        variant: TransVariant) -> ReturnDest {
         // If the return is ignored, we can just return a do-nothing ReturnDest
         if fn_ret_ty.is_ignore() {
             return ReturnDest::Nothing;
@@ -857,7 +863,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 }
             }
         } else {
-            self.trans_lvalue(bcx, dest)
+            self.trans_lvalue(bcx, dest, variant)
         };
         if fn_ret_ty.is_indirect() {
             llargs.push(dest.llval);
@@ -868,14 +874,15 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
     }
 
     fn trans_transmute(&mut self, bcx: &Builder<'a, 'tcx>,
-                       src: &mir::Operand<'tcx>, dst: LvalueRef<'tcx>) {
-        let mut val = self.trans_operand(bcx, src);
+                       src: &mir::Operand<'tcx>, dst: LvalueRef<'tcx>,
+                       variant: TransVariant) {
+        let mut val = self.trans_operand(bcx, src, variant);
         if let ty::TyFnDef(def_id, substs, _) = val.ty.sty {
             let llouttype = type_of::type_of(bcx.ccx, dst.ty.to_ty(bcx.tcx()));
             let out_type_size = llbitsize_of_real(bcx.ccx, llouttype);
             if out_type_size != 0 {
                 // FIXME #19925 Remove this hack after a release cycle.
-                let f = Callee::def(bcx.ccx, def_id, substs);
+                let f = Callee::def(bcx.ccx, def_id, substs, variant);
                 let ty = match f.ty.sty {
                     ty::TyFnDef(.., f) => bcx.tcx().mk_fn_ptr(f),
                     _ => f.ty

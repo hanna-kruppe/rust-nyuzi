@@ -32,7 +32,7 @@ use cleanup::CleanupScope;
 use common::*;
 use machine::*;
 use monomorphize;
-use trans_item::TransItem;
+use trans_item::{TransItem, TransVariant};
 use tvec;
 use type_of::{type_of, sizing_type_of, align_of};
 use type_::Type;
@@ -46,7 +46,9 @@ pub fn trans_exchange_free_ty<'a, 'tcx>(bcx: &Builder<'a, 'tcx>, ptr: LvalueRef<
     let content_ty = ptr.ty.to_ty(bcx.tcx());
     let def_id = langcall(bcx.tcx(), None, "", BoxFreeFnLangItem);
     let substs = bcx.tcx().mk_substs(iter::once(Kind::from(content_ty)));
-    let callee = Callee::def(bcx.ccx, def_id, substs);
+    // FIXME(rkruppe) Box==scalar hack
+    let variant = TransVariant { simt: false };
+    let callee = Callee::def(bcx.ccx, def_id, substs, variant);
 
     let fn_ty = callee.direct_fn_type(bcx.ccx, &[]);
 
@@ -94,8 +96,8 @@ pub fn get_drop_glue_type<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>, t: Ty<'t
     }
 }
 
-fn drop_ty<'a, 'tcx>(bcx: &Builder<'a, 'tcx>, args: LvalueRef<'tcx>) {
-    call_drop_glue(bcx, args, false, None)
+fn drop_ty<'a, 'tcx>(bcx: &Builder<'a, 'tcx>, args: LvalueRef<'tcx>, variant: TransVariant) {
+    call_drop_glue(bcx, args, false, None, variant)
 }
 
 pub fn call_drop_glue<'a, 'tcx>(
@@ -103,6 +105,7 @@ pub fn call_drop_glue<'a, 'tcx>(
     mut args: LvalueRef<'tcx>,
     skip_dtor: bool,
     funclet: Option<&'a Funclet>,
+    variant: TransVariant
 ) {
     let t = args.ty.to_ty(bcx.tcx());
     // NB: v is an *alias* of type t here, not a direct value.
@@ -114,7 +117,7 @@ pub fn call_drop_glue<'a, 'tcx>(
         } else {
             DropGlueKind::Ty(t)
         };
-        let glue = get_drop_glue_core(ccx, g);
+        let glue = get_drop_glue_core(ccx, g, variant);
         let glue_type = get_drop_glue_type(ccx.shared(), t);
         if glue_type != t {
             args.llval = bcx.pointercast(args.llval, type_of(ccx, glue_type).ptr_to());
@@ -126,8 +129,11 @@ pub fn call_drop_glue<'a, 'tcx>(
     }
 }
 
-pub fn get_drop_glue<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> ValueRef {
-    get_drop_glue_core(ccx, DropGlueKind::Ty(t))
+pub fn get_drop_glue<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+                               t: Ty<'tcx>,
+                               variant: TransVariant)
+                               -> ValueRef {
+    get_drop_glue_core(ccx, DropGlueKind::Ty(t), variant)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -157,22 +163,27 @@ impl<'tcx> DropGlueKind<'tcx> {
     }
 }
 
-fn get_drop_glue_core<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, g: DropGlueKind<'tcx>) -> ValueRef {
+fn get_drop_glue_core<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+                                g: DropGlueKind<'tcx>,
+                                variant: TransVariant) 
+                                -> ValueRef {
     let g = g.map_ty(|t| get_drop_glue_type(ccx.shared(), t));
-    match ccx.drop_glues().borrow().get(&g) {
+    match ccx.drop_glues().borrow().get(&(g, variant)) {
         Some(&(glue, _)) => glue,
         None => {
             bug!("Could not find drop glue for {:?} -- {} -- {}.",
                     g,
-                    TransItem::DropGlue(g).to_raw_string(),
+                    TransItem::DropGlue(g, variant).to_raw_string(),
                     ccx.codegen_unit().name());
         }
     }
 }
 
-pub fn implement_drop_glue<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, g: DropGlueKind<'tcx>) {
+pub fn implement_drop_glue<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
+                                     g: DropGlueKind<'tcx>,
+                                     variant: TransVariant) {
     assert_eq!(g.ty(), get_drop_glue_type(ccx.shared(), g.ty()));
-    let (llfn, _) = ccx.drop_glues().borrow().get(&g).unwrap().clone();
+    let (llfn, _) = ccx.drop_glues().borrow().get(&(g, variant)).unwrap().clone();
 
     let mut bcx = Builder::new_block(ccx, llfn, "entry-block");
 
@@ -217,7 +228,7 @@ pub fn implement_drop_glue<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, g: DropGlueKi
             } else {
                 LvalueRef::new_sized_ty(bcx.load(ptr.llval), content_ty)
             };
-            drop_ty(&bcx, ptr);
+            drop_ty(&bcx, ptr, variant);
             trans_exchange_free_ty(&bcx, ptr);
             bcx
         }
@@ -245,7 +256,7 @@ pub fn implement_drop_glue<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, g: DropGlueKi
             // Issue #23611: schedule cleanup of contents, re-inspecting the
             // discriminant (if any) in case of variant swap in drop code.
             let contents_scope = if !shallow_drop {
-                CleanupScope::schedule_drop_adt_contents(&bcx, ptr)
+                CleanupScope::schedule_drop_adt_contents(&bcx, ptr, variant)
             } else {
                 CleanupScope::noop()
             };
@@ -259,7 +270,7 @@ pub fn implement_drop_glue<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, g: DropGlueKi
                 _ => bug!("dtor for {:?} is not an impl???", t)
             };
             let dtor_did = def.destructor().unwrap();
-            let callee = Callee::def(bcx.ccx, dtor_did, vtbl.substs);
+            let callee = Callee::def(bcx.ccx, dtor_did, vtbl.substs, variant);
             let fn_ty = callee.direct_fn_type(bcx.ccx, &[]);
             let llret;
             let args = &[ptr.llval, ptr.llextra][..1 + ptr.has_extra() as usize];
@@ -279,7 +290,7 @@ pub fn implement_drop_glue<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, g: DropGlueKi
         }
         _ => {
             if bcx.ccx.shared().type_needs_drop(t) {
-                drop_structural_ty(bcx, ptr)
+                drop_structural_ty(bcx, ptr, variant)
             } else {
                 bcx
             }
@@ -398,21 +409,23 @@ pub fn size_and_align_of_dst<'a, 'tcx>(bcx: &Builder<'a, 'tcx>, t: Ty<'tcx>, inf
 // Iterates through the elements of a structural type, dropping them.
 fn drop_structural_ty<'a, 'tcx>(
     cx: Builder<'a, 'tcx>,
-    mut ptr: LvalueRef<'tcx>
+    mut ptr: LvalueRef<'tcx>,
+    trans_variant: TransVariant
 ) -> Builder<'a, 'tcx> {
     fn iter_variant_fields<'a, 'tcx>(
         cx: &'a Builder<'a, 'tcx>,
         av: LvalueRef<'tcx>,
         adt_def: &'tcx AdtDef,
         variant_index: usize,
-        substs: &'tcx Substs<'tcx>
+        substs: &'tcx Substs<'tcx>,
+        trans_variant: TransVariant
     ) {
         let variant = &adt_def.variants[variant_index];
         let tcx = cx.tcx();
         for (i, field) in variant.fields.iter().enumerate() {
             let arg = monomorphize::field_ty(tcx, substs, field);
             let field_ptr = av.trans_field_ptr(&cx, i);
-            drop_ty(&cx, LvalueRef::new_sized_ty(field_ptr, arg));
+            drop_ty(&cx, LvalueRef::new_sized_ty(field_ptr, arg), trans_variant);
         }
     }
 
@@ -422,7 +435,7 @@ fn drop_structural_ty<'a, 'tcx>(
         ty::TyClosure(def_id, substs) => {
             for (i, upvar_ty) in substs.upvar_tys(def_id, cx.tcx()).enumerate() {
                 let llupvar = ptr.trans_field_ptr(&cx, i);
-                drop_ty(&cx, LvalueRef::new_sized_ty(llupvar, upvar_ty));
+                drop_ty(&cx, LvalueRef::new_sized_ty(llupvar, upvar_ty), trans_variant);
             }
         }
         ty::TyArray(_, n) => {
@@ -430,17 +443,17 @@ fn drop_structural_ty<'a, 'tcx>(
             let len = C_uint(cx.ccx, n);
             let unit_ty = t.sequence_element_type(cx.tcx());
             cx = tvec::slice_for_each(&cx, base, unit_ty, len,
-                |bb, vv| drop_ty(bb, LvalueRef::new_sized_ty(vv, unit_ty)));
+                |bb, vv| drop_ty(bb, LvalueRef::new_sized_ty(vv, unit_ty), trans_variant));
         }
         ty::TySlice(_) | ty::TyStr => {
             let unit_ty = t.sequence_element_type(cx.tcx());
             cx = tvec::slice_for_each(&cx, ptr.llval, unit_ty, ptr.llextra,
-                |bb, vv| drop_ty(bb, LvalueRef::new_sized_ty(vv, unit_ty)));
+                |bb, vv| drop_ty(bb, LvalueRef::new_sized_ty(vv, unit_ty), trans_variant));
         }
         ty::TyTuple(ref args) => {
             for (i, arg) in args.iter().enumerate() {
                 let llfld_a = ptr.trans_field_ptr(&cx, i);
-                drop_ty(&cx, LvalueRef::new_sized_ty(llfld_a, *arg));
+                drop_ty(&cx, LvalueRef::new_sized_ty(llfld_a, *arg), trans_variant);
             }
         }
         ty::TyAdt(adt, substs) => match adt.adt_kind() {
@@ -453,7 +466,7 @@ fn drop_structural_ty<'a, 'tcx>(
                     if cx.ccx.shared().type_is_sized(field_ty) {
                         field_ptr.llextra = ptr::null_mut();
                     }
-                    drop_ty(&cx, field_ptr);
+                    drop_ty(&cx, field_ptr, trans_variant);
                 }
             }
             AdtKind::Union => {
@@ -478,7 +491,7 @@ fn drop_structural_ty<'a, 'tcx>(
                                 substs: substs,
                                 variant_index: 0,
                             };
-                            iter_variant_fields(&cx, ptr, &adt, 0, substs);
+                            iter_variant_fields(&cx, ptr, &adt, 0, substs, trans_variant);
                         }
                     }
                     layout::CEnum { .. } |
@@ -487,7 +500,7 @@ fn drop_structural_ty<'a, 'tcx>(
                     layout::StructWrappedNullablePointer { .. } => {
                         let lldiscrim_a = adt::trans_get_discr(&cx, t, ptr.llval, None, false);
                         let tcx = cx.tcx();
-                        drop_ty(&cx, LvalueRef::new_sized_ty(lldiscrim_a, tcx.types.isize));
+                        drop_ty(&cx, LvalueRef::new_sized_ty(lldiscrim_a, tcx.types.isize), trans_variant);
 
                         // Create a fall-through basic block for the "else" case of
                         // the switch instruction we're about to generate. Note that
@@ -518,7 +531,7 @@ fn drop_structural_ty<'a, 'tcx>(
                                 substs: substs,
                                 variant_index: i,
                             };
-                            iter_variant_fields(&variant_cx, ptr, &adt, i, substs);
+                            iter_variant_fields(&variant_cx, ptr, &adt, i, substs, trans_variant);
                             variant_cx.br(next_cx.llbb());
                         }
                         cx = next_cx;

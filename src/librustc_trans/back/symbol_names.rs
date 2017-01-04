@@ -99,6 +99,7 @@
 
 use common::SharedCrateContext;
 use monomorphize::Instance;
+use trans_item::TransVariant;
 
 use rustc::middle::weak_lang_items;
 use rustc::hir::def_id::LOCAL_CRATE;
@@ -169,21 +170,26 @@ fn get_symbol_hash<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
 }
 
 impl<'a, 'tcx> Instance<'tcx> {
-    pub fn symbol_name(self, scx: &SharedCrateContext<'a, 'tcx>) -> String {
+    pub fn symbol_name(self,
+                       scx: &SharedCrateContext<'a, 'tcx>,
+                       variant: TransVariant) -> String {
         let Instance { def: def_id, substs } = self;
+        let TransVariant { simt } = variant;
 
-        debug!("symbol_name(def_id={:?}, substs={:?})",
-               def_id, substs);
+        debug!("symbol_name(def_id={:?}, substs={:?}, variant: {:?})",
+               def_id, substs, variant);
 
         let node_id = scx.tcx().map.as_local_node_id(def_id);
 
         if let Some(id) = node_id {
             if scx.sess().plugin_registrar_fn.get() == Some(id) {
+                assert!(!simt);
                 let svh = &scx.link_meta().crate_hash;
                 let idx = def_id.index;
                 return scx.sess().generate_plugin_registrar_symbol(svh, idx);
             }
             if scx.sess().derive_registrar_fn.get() == Some(id) {
+                assert!(!simt);
                 let svh = &scx.link_meta().crate_hash;
                 let idx = def_id.index;
                 return scx.sess().generate_derive_registrar_symbol(svh, idx);
@@ -202,10 +208,12 @@ impl<'a, 'tcx> Instance<'tcx> {
         };
 
         if let Some(name) = weak_lang_items::link_name(&attrs) {
+            assert!(!simt);
             return name.to_string();
         }
 
         if is_foreign {
+            assert!(!simt);
             if let Some(name) = attr::first_attr_value_str_by_name(&attrs, "link_name") {
                 return name.to_string();
             }
@@ -214,11 +222,14 @@ impl<'a, 'tcx> Instance<'tcx> {
         }
 
         if let Some(name) = attr::find_export_name_attr(scx.sess().diagnostic(), &attrs) {
+            assert!(!simt);
             // Use provided name
             return name.to_string();
         }
 
         if attr::contains_name(&attrs, "no_mangle") {
+            // FIXME does this make sense?
+            assert!(!simt);
             // Don't mangle
             return scx.tcx().item_name(def_id).as_str().to_string();
         }
@@ -265,7 +276,8 @@ impl<'a, 'tcx> Instance<'tcx> {
             scx.tcx().push_item_path(&mut buffer, def_id);
         });
 
-        mangle(buffer.names.into_iter(), &hash)
+
+        mangle(buffer.names.into_iter(), &hash, variant)
     }
 }
 
@@ -294,7 +306,8 @@ pub fn exported_name_from_type_and_prefix<'a, 'tcx>(scx: &SharedCrateContext<'a,
     };
     let hash = get_symbol_hash(scx, &empty_def_path, t, None);
     let path = [Symbol::intern(prefix).as_str()];
-    mangle(path.iter().cloned(), &hash)
+    // only scalar code gets exported
+    mangle(path.iter().cloned(), &hash, TransVariant { simt: false })
 }
 
 // Name sanitation. LLVM will happily accept identifiers with weird names, but
@@ -347,7 +360,9 @@ pub fn sanitize(s: &str) -> String {
     return result;
 }
 
-fn mangle<PI: Iterator<Item=InternedString>>(path: PI, hash: &str) -> String {
+fn mangle<PI: Iterator<Item=InternedString>>(path: PI,
+                                             hash: &str,
+                                             variant: TransVariant) -> String {
     // Follow C++ namespace-mangling style, see
     // http://en.wikipedia.org/wiki/Name_mangling for more info.
     //
@@ -372,6 +387,10 @@ fn mangle<PI: Iterator<Item=InternedString>>(path: PI, hash: &str) -> String {
     // First, connect each component with <len, name> pairs.
     for data in path {
         push(&mut n, &data);
+    }
+
+    if variant.simt {
+        push(&mut n, "$simt");
     }
 
     push(&mut n, hash);

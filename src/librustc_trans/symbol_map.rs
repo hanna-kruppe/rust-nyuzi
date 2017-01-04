@@ -68,6 +68,9 @@ impl<'tcx> SymbolMap<'tcx> {
                 };
 
                 let error_message = format!("symbol `{}` is already defined", sym1);
+                debug!("colliding trans items: {} vs {}",
+                        pair[0].0.to_string(scx.tcx()),
+                        pair[1].0.to_string(scx.tcx()));
 
                 if let Some(span) = span {
                     scx.sess().span_fatal(span, &error_message)
@@ -96,11 +99,11 @@ impl<'tcx> SymbolMap<'tcx> {
         fn get_span<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                               trans_item: TransItem<'tcx>) -> Option<Span> {
             match trans_item {
-                TransItem::Fn(Instance { def, .. }) => {
+                TransItem::Fn(Instance { def, .. }, _) => {
                     tcx.map.as_local_node_id(def)
                 }
                 TransItem::Static(node_id) => Some(node_id),
-                TransItem::DropGlue(_) => None,
+                TransItem::DropGlue(..) => None,
             }.map(|node_id| {
                 tcx.map.span(node_id)
             })

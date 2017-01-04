@@ -19,6 +19,7 @@ use builder::Builder;
 use value::Value;
 use type_of;
 use type_::Type;
+use trans_item::TransVariant;
 
 use std::fmt;
 
@@ -165,7 +166,8 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
 
     pub fn trans_consume(&mut self,
                          bcx: &Builder<'a, 'tcx>,
-                         lvalue: &mir::Lvalue<'tcx>)
+                         lvalue: &mir::Lvalue<'tcx>,
+                         variant: TransVariant)
                          -> OperandRef<'tcx>
     {
         debug!("trans_consume(lvalue={:?})", lvalue);
@@ -210,25 +212,26 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
 
         // for most lvalues, to consume them we just load them
         // out from their home
-        let tr_lvalue = self.trans_lvalue(bcx, lvalue);
+        let tr_lvalue = self.trans_lvalue(bcx, lvalue, variant);
         let ty = tr_lvalue.ty.to_ty(bcx.tcx());
         self.trans_load(bcx, tr_lvalue.llval, ty)
     }
 
     pub fn trans_operand(&mut self,
                          bcx: &Builder<'a, 'tcx>,
-                         operand: &mir::Operand<'tcx>)
+                         operand: &mir::Operand<'tcx>,
+                         variant: TransVariant)
                          -> OperandRef<'tcx>
     {
         debug!("trans_operand(operand={:?})", operand);
 
         match *operand {
             mir::Operand::Consume(ref lvalue) => {
-                self.trans_consume(bcx, lvalue)
+                self.trans_consume(bcx, lvalue, variant)
             }
 
             mir::Operand::Constant(ref constant) => {
-                let val = self.trans_constant(bcx, constant);
+                let val = self.trans_constant(bcx, constant, variant);
                 let operand = val.to_operand(bcx.ccx);
                 if let OperandValue::Ref(ptr) = operand.val {
                     // If this is a OperandValue::Ref to an immediate constant, load it.

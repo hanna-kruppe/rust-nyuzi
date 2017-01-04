@@ -24,7 +24,7 @@ use glue::DropGlueKind;
 use monomorphize::Instance;
 
 use partitioning::CodegenUnit;
-use trans_item::TransItem;
+use trans_item::{TransItem, TransVariant};
 use type_::Type;
 use rustc_data_structures::base_n;
 use rustc::ty::subst::Substs;
@@ -94,9 +94,9 @@ pub struct LocalCrateContext<'tcx> {
     codegen_unit: CodegenUnit<'tcx>,
     needs_unwind_cleanup_cache: RefCell<FxHashMap<Ty<'tcx>, bool>>,
     fn_pointer_shims: RefCell<FxHashMap<Ty<'tcx>, ValueRef>>,
-    drop_glues: RefCell<FxHashMap<DropGlueKind<'tcx>, (ValueRef, FnType)>>,
+    drop_glues: RefCell<FxHashMap<(DropGlueKind<'tcx>, TransVariant), (ValueRef, FnType)>>,
     /// Cache instances of monomorphic and polymorphic items
-    instances: RefCell<FxHashMap<Instance<'tcx>, ValueRef>>,
+    instances: RefCell<FxHashMap<(Instance<'tcx>, TransVariant), ValueRef>>,
     /// Cache generated vtables
     vtables: RefCell<FxHashMap<(ty::Ty<'tcx>,
                                 Option<ty::PolyExistentialTraitRef<'tcx>>), ValueRef>>,
@@ -144,7 +144,7 @@ pub struct LocalCrateContext<'tcx> {
     str_slice_type: Type,
 
     /// Holds the LLVM values for closure IDs.
-    closure_vals: RefCell<FxHashMap<Instance<'tcx>, ValueRef>>,
+    closure_vals: RefCell<FxHashMap<(Instance<'tcx>, TransVariant), ValueRef>>,
 
     dbg_cx: Option<debuginfo::CrateDebugContext<'tcx>>,
 
@@ -733,11 +733,12 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
     }
 
     pub fn drop_glues<'a>(&'a self)
-                          -> &'a RefCell<FxHashMap<DropGlueKind<'tcx>, (ValueRef, FnType)>> {
+        -> &'a RefCell<FxHashMap<(DropGlueKind<'tcx>, TransVariant), (ValueRef, FnType)>> {
         &self.local().drop_glues
     }
 
-    pub fn instances<'a>(&'a self) -> &'a RefCell<FxHashMap<Instance<'tcx>, ValueRef>> {
+    pub fn instances<'a>(&'a self)
+        -> &'a RefCell<FxHashMap<(Instance<'tcx>, TransVariant), ValueRef>> {
         &self.local().instances
     }
 
@@ -813,7 +814,7 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         self.local().str_slice_type
     }
 
-    pub fn closure_vals<'a>(&'a self) -> &'a RefCell<FxHashMap<Instance<'tcx>, ValueRef>> {
+    pub fn closure_vals<'a>(&'a self) -> &'a RefCell<FxHashMap<(Instance<'tcx>, TransVariant), ValueRef>> {
         &self.local().closure_vals
     }
 
@@ -925,7 +926,9 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         let tcx = self.tcx();
         let llfn = match tcx.lang_items.eh_personality() {
             Some(def_id) if !base::wants_msvc_seh(self.sess()) => {
-                Callee::def(self, def_id, tcx.intern_substs(&[])).reify(self)
+                // FIXME(rkruppe) eh==scalar hack
+                let variant = TransVariant { simt: false };
+                Callee::def(self, def_id, tcx.intern_substs(&[]), variant).reify(self)
             }
             _ => {
                 let name = if base::wants_msvc_seh(self.sess()) {
@@ -953,7 +956,9 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
         let tcx = self.tcx();
         assert!(self.sess().target.target.options.custom_unwind_resume);
         if let Some(def_id) = tcx.lang_items.eh_unwind_resume() {
-            let llfn = Callee::def(self, def_id, tcx.intern_substs(&[])).reify(self);
+            // FIXME(rkruppe) eh==scalar hack
+            let variant = TransVariant { simt: false };
+            let llfn = Callee::def(self, def_id, tcx.intern_substs(&[]), variant).reify(self);
             unwresume.set(Some(llfn));
             return llfn;
         }
@@ -1154,6 +1159,9 @@ fn declare_intrinsic(ccx: &CrateContext, key: &str) -> Option<ValueRef> {
     ifn!("llvm.x86.seh.recoverfp", fn(i8p, i8p) -> i8p);
 
     ifn!("llvm.assume", fn(i1) -> void);
+
+    ifn!("llvm.nyuzi.simt16", fn(i8p, i8p) -> void);
+    ifn!("llvm.nyuzi.simt_lane_id", fn() -> t_i32);
 
     if ccx.sess().opts.debuginfo != NoDebugInfo {
         ifn!("llvm.dbg.declare", fn(Type::metadata(ccx), Type::metadata(ccx)) -> void);

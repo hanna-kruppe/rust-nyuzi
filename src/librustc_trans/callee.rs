@@ -32,7 +32,7 @@ use declare;
 use value::Value;
 use meth;
 use monomorphize::{self, Instance};
-use trans_item::TransItem;
+use trans_item::{TransItem, TransVariant};
 use type_of;
 use Disr;
 use rustc::ty::{self, Ty, TypeFoldable};
@@ -58,25 +58,30 @@ pub enum CalleeData {
 #[derive(Debug)]
 pub struct Callee<'tcx> {
     pub data: CalleeData,
-    pub ty: Ty<'tcx>
+    pub ty: Ty<'tcx>,
+    pub variant: TransVariant,
 }
 
 impl<'tcx> Callee<'tcx> {
     /// Function pointer.
-    pub fn ptr(llfn: ValueRef, ty: Ty<'tcx>) -> Callee<'tcx> {
+    pub fn ptr(llfn: ValueRef, ty: Ty<'tcx>, variant: TransVariant) -> Callee<'tcx> {
         Callee {
             data: Fn(llfn),
-            ty: ty
+            ty: ty,
+            variant: variant
         }
     }
 
     /// Function or method definition.
-    pub fn def<'a>(ccx: &CrateContext<'a, 'tcx>, def_id: DefId, substs: &'tcx Substs<'tcx>)
+    pub fn def<'a>(ccx: &CrateContext<'a, 'tcx>,
+                   def_id: DefId,
+                   substs: &'tcx Substs<'tcx>,
+                   variant: TransVariant)
                    -> Callee<'tcx> {
         let tcx = ccx.tcx();
 
         if let Some(trait_id) = tcx.trait_of_item(def_id) {
-            return Callee::trait_method(ccx, trait_id, def_id, substs);
+            return Callee::trait_method(ccx, trait_id, def_id, substs, variant);
         }
 
         let fn_ty = def_ty(ccx.shared(), def_id, substs);
@@ -84,7 +89,8 @@ impl<'tcx> Callee<'tcx> {
             if f.abi == Abi::RustIntrinsic || f.abi == Abi::PlatformIntrinsic {
                 return Callee {
                     data: Intrinsic,
-                    ty: fn_ty
+                    ty: fn_ty,
+                    variant: variant,
                 };
             }
         }
@@ -94,20 +100,22 @@ impl<'tcx> Callee<'tcx> {
             if let Some(v) = adt_def.variants.iter().find(|v| def_id == v.did) {
                 return Callee {
                     data: NamedTupleConstructor(Disr::from(v.disr_val)),
-                    ty: fn_ty
+                    ty: fn_ty,
+                    variant: variant,
                 };
             }
         }
 
-        let (llfn, ty) = get_fn(ccx, def_id, substs);
-        Callee::ptr(llfn, ty)
+        let (llfn, ty) = get_fn(ccx, def_id, substs, variant);
+        Callee::ptr(llfn, ty, variant)
     }
 
     /// Trait method, which has to be resolved to an impl method.
     pub fn trait_method<'a>(ccx: &CrateContext<'a, 'tcx>,
                             trait_id: DefId,
                             def_id: DefId,
-                            substs: &'tcx Substs<'tcx>)
+                            substs: &'tcx Substs<'tcx>,
+                            variant: TransVariant)
                             -> Callee<'tcx> {
         let tcx = ccx.tcx();
 
@@ -122,8 +130,8 @@ impl<'tcx> Callee<'tcx> {
                 // That is because default methods have the same ID as the
                 // trait method used to look up the impl method that ended
                 // up here, so calling Callee::def would infinitely recurse.
-                let (llfn, ty) = get_fn(ccx, def_id, substs);
-                Callee::ptr(llfn, ty)
+                let (llfn, ty) = get_fn(ccx, def_id, substs, variant);
+                Callee::ptr(llfn, ty, variant)
             }
             traits::VtableClosure(vtable_closure) => {
                 // The substitutions should have no type parameters remaining
@@ -135,25 +143,28 @@ impl<'tcx> Callee<'tcx> {
                     vtable_closure.closure_def_id,
                     vtable_closure.substs,
                     instance,
-                    trait_closure_kind);
+                    trait_closure_kind,
+                    variant);
 
                 let method_ty = def_ty(ccx.shared(), def_id, substs);
-                Callee::ptr(llfn, method_ty)
+                Callee::ptr(llfn, method_ty, variant)
             }
             traits::VtableFnPointer(vtable_fn_pointer) => {
                 let trait_closure_kind = tcx.lang_items.fn_trait_kind(trait_id).unwrap();
                 let instance = Instance::new(def_id, substs);
                 let llfn = trans_fn_pointer_shim(ccx, instance,
                                                  trait_closure_kind,
-                                                 vtable_fn_pointer.fn_ty);
+                                                 vtable_fn_pointer.fn_ty,
+                                                 variant);
 
                 let method_ty = def_ty(ccx.shared(), def_id, substs);
-                Callee::ptr(llfn, method_ty)
+                Callee::ptr(llfn, method_ty, variant)
             }
             traits::VtableObject(ref data) => {
                 Callee {
                     data: Virtual(tcx.get_vtable_index_of_object_method(data, def_id)),
-                    ty: def_ty(ccx.shared(), def_id, substs)
+                    ty: def_ty(ccx.shared(), def_id, substs),
+                    variant: variant,
                 }
             }
             vtable => {
@@ -186,16 +197,16 @@ impl<'tcx> Callee<'tcx> {
             NamedTupleConstructor(disr) => match self.ty.sty {
                 ty::TyFnDef(def_id, substs, _) => {
                     let instance = Instance::new(def_id, substs);
-                    if let Some(&llfn) = ccx.instances().borrow().get(&instance) {
+                    if let Some(&llfn) = ccx.instances().borrow().get(&(instance, self.variant)) {
                         return llfn;
                     }
 
                     let sym = ccx.symbol_map().get_or_compute(ccx.shared(),
-                                                              TransItem::Fn(instance));
-                    assert!(!ccx.codegen_unit().contains_item(&TransItem::Fn(instance)));
+                                                              TransItem::Fn(instance, self.variant));
+                    assert!(!ccx.codegen_unit().contains_item(&TransItem::Fn(instance, self.variant)));
                     let lldecl = declare::define_internal_fn(ccx, &sym, self.ty);
                     base::trans_ctor_shim(ccx, def_id, substs, disr, lldecl);
-                    ccx.instances().borrow_mut().insert(instance, lldecl);
+                    ccx.instances().borrow_mut().insert((instance, self.variant), lldecl);
 
                     lldecl
                 }
@@ -220,11 +231,12 @@ fn trans_closure_method<'a, 'tcx>(ccx: &'a CrateContext<'a, 'tcx>,
                                   def_id: DefId,
                                   substs: ty::ClosureSubsts<'tcx>,
                                   method_instance: Instance<'tcx>,
-                                  trait_closure_kind: ty::ClosureKind)
+                                  trait_closure_kind: ty::ClosureKind,
+                                  variant: TransVariant)
                                   -> ValueRef
 {
     // If this is a closure, redirect to it.
-    let (llfn, _) = get_fn(ccx, def_id, substs.substs);
+    let (llfn, _) = get_fn(ccx, def_id, substs.substs, variant);
 
     // If the closure is a Fn closure, but a FnOnce is needed (etc),
     // then adapt the self type
@@ -239,7 +251,8 @@ fn trans_closure_method<'a, 'tcx>(ccx: &'a CrateContext<'a, 'tcx>,
                                                def_id,
                                                substs,
                                                method_instance,
-                                               llfn),
+                                               llfn,
+                                               variant),
         Ok(false) => llfn,
         Err(()) => {
             bug!("trans_closure_adapter_shim: cannot convert {:?} to {:?}",
@@ -287,10 +300,11 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
     def_id: DefId,
     substs: ty::ClosureSubsts<'tcx>,
     method_instance: Instance<'tcx>,
-    llreffn: ValueRef)
+    llreffn: ValueRef,
+    variant: TransVariant)
     -> ValueRef
 {
-    if let Some(&llfn) = ccx.instances().borrow().get(&method_instance) {
+    if let Some(&llfn) = ccx.instances().borrow().get(&(method_instance, variant)) {
         return llfn;
     }
 
@@ -339,7 +353,7 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
     }));
 
     // Create the by-value helper.
-    let function_name = method_instance.symbol_name(ccx.shared());
+    let function_name = method_instance.symbol_name(ccx.shared(), variant);
     let lloncefn = declare::define_internal_fn(ccx, &function_name, llonce_fn_ty);
     attributes::set_frame_pointer_elimination(ccx, lloncefn);
 
@@ -348,7 +362,8 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
 
     let callee = Callee {
         data: Fn(llreffn),
-        ty: llref_fn_ty
+        ty: llref_fn_ty,
+        variant: variant,
     };
 
     // the first argument (`self`) will be the (by value) closure env.
@@ -379,7 +394,7 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
     // Call the by-ref closure body with `self` in a cleanup scope,
     // to drop `self` when the body returns, or in case it unwinds.
     let self_scope = CleanupScope::schedule_drop_mem(
-        &bcx, LvalueRef::new_sized_ty(llenv, closure_ty)
+        &bcx, LvalueRef::new_sized_ty(llenv, closure_ty), variant
     );
 
     let llfn = callee.reify(bcx.ccx);
@@ -405,7 +420,7 @@ fn trans_fn_once_adapter_shim<'a, 'tcx>(
         }
     }
 
-    ccx.instances().borrow_mut().insert(method_instance, lloncefn);
+    ccx.instances().borrow_mut().insert((method_instance, variant), lloncefn);
 
     lloncefn
 }
@@ -426,7 +441,8 @@ fn trans_fn_pointer_shim<'a, 'tcx>(
     ccx: &'a CrateContext<'a, 'tcx>,
     method_instance: Instance<'tcx>,
     closure_kind: ty::ClosureKind,
-    bare_fn_ty: Ty<'tcx>)
+    bare_fn_ty: Ty<'tcx>,
+    variant: TransVariant)
     -> ValueRef
 {
     let tcx = ccx.tcx();
@@ -443,7 +459,7 @@ fn trans_fn_pointer_shim<'a, 'tcx>(
     let llfnpointer = match bare_fn_ty.sty {
         ty::TyFnDef(def_id, substs, _) => {
             // Function definitions have to be turned into a pointer.
-            let llfn = Callee::def(ccx, def_id, substs).reify(ccx);
+            let llfn = Callee::def(ccx, def_id, substs, variant).reify(ccx);
             if !is_by_ref {
                 // A by-value fn item is ignored, so the shim has
                 // the same signature as the original function.
@@ -500,7 +516,7 @@ fn trans_fn_pointer_shim<'a, 'tcx>(
     debug!("tuple_fn_ty: {:?}", tuple_fn_ty);
 
     //
-    let function_name = method_instance.symbol_name(ccx.shared());
+    let function_name = method_instance.symbol_name(ccx.shared(), variant);
     let llfn = declare::define_internal_fn(ccx, &function_name, tuple_fn_ty);
     attributes::set_frame_pointer_elimination(ccx, llfn);
     //
@@ -520,7 +536,8 @@ fn trans_fn_pointer_shim<'a, 'tcx>(
 
     let callee = Callee {
         data: Fn(llfnpointer),
-        ty: bare_fn_ty
+        ty: bare_fn_ty,
+        variant: variant
     };
     let fn_ret = callee.ty.fn_ret();
     let fn_ty = callee.direct_fn_type(ccx, &[]);
@@ -552,7 +569,8 @@ fn trans_fn_pointer_shim<'a, 'tcx>(
 /// - `substs`: values for each of the fn/method's parameters
 fn get_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                     def_id: DefId,
-                    substs: &'tcx Substs<'tcx>)
+                    substs: &'tcx Substs<'tcx>,
+                    variant: TransVariant)
                     -> (ValueRef, Ty<'tcx>) {
     let tcx = ccx.tcx();
 
@@ -567,12 +585,12 @@ fn get_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     let item_ty = ccx.tcx().item_type(def_id);
     let fn_ty = monomorphize::apply_param_substs(ccx.shared(), substs, &item_ty);
 
-    if let Some(&llfn) = ccx.instances().borrow().get(&instance) {
+    if let Some(&llfn) = ccx.instances().borrow().get(&(instance, variant)) {
         return (llfn, fn_ty);
     }
 
     let sym = ccx.symbol_map().get_or_compute(ccx.shared(),
-                                              TransItem::Fn(instance));
+                                              TransItem::Fn(instance, variant));
     debug!("get_fn({:?}: {:?}) => {}", instance, fn_ty, sym);
 
     // This is subtle and surprising, but sometimes we have to bitcast
@@ -620,7 +638,7 @@ fn get_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         attributes::from_fn_attrs(ccx, &attrs, llfn);
 
         let is_local_def = ccx.shared().translation_items().borrow()
-                              .contains(&TransItem::Fn(instance));
+                              .contains(&TransItem::Fn(instance, variant));
         if is_local_def {
             // FIXME(eddyb) Doubt all extern fn should allow unwinding.
             attributes::unwind(llfn, true);
@@ -636,7 +654,7 @@ fn get_fn<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
         llfn
     };
 
-    ccx.instances().borrow_mut().insert(instance, llfn);
+    ccx.instances().borrow_mut().insert((instance, variant), llfn);
 
     (llfn, fn_ty)
 }

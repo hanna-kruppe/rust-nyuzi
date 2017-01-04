@@ -185,7 +185,7 @@ impl<'tcx> CodegenUnit<'tcx> {
             symbol_name.len().hash(&mut state);
             symbol_name.hash(&mut state);
             let exported = match item {
-               TransItem::Fn(ref instance) => {
+               TransItem::Fn(ref instance, _) => {
                     let node_id = scx.tcx().map.as_local_node_id(instance.def);
                     node_id.map(|node_id| exported_symbols.contains(&node_id))
                            .unwrap_or(false)
@@ -240,11 +240,11 @@ impl<'tcx> CodegenUnit<'tcx> {
 
         fn local_node_id(tcx: TyCtxt, trans_item: TransItem) -> Option<NodeId> {
             match trans_item {
-                TransItem::Fn(instance) => {
+                TransItem::Fn(instance, _) => {
                     tcx.map.as_local_node_id(instance.def)
                 }
                 TransItem::Static(node_id) => Some(node_id),
-                TransItem::DropGlue(_) => None,
+                TransItem::DropGlue(..) => None,
             }
         }
     }
@@ -454,7 +454,7 @@ fn characteristic_def_id_of_trans_item<'a, 'tcx>(scx: &SharedCrateContext<'a, 't
                                                  -> Option<DefId> {
     let tcx = scx.tcx();
     match trans_item {
-        TransItem::Fn(instance) => {
+        TransItem::Fn(instance, _) => {
             // If this is a method, we want to put it into the same module as
             // its self-type. If the self-type does not provide a characteristic
             // DefId, we use the location of the impl after all.
@@ -481,7 +481,7 @@ fn characteristic_def_id_of_trans_item<'a, 'tcx>(scx: &SharedCrateContext<'a, 't
 
             Some(instance.def)
         }
-        TransItem::DropGlue(dg) => characteristic_def_id_of_type(dg.ty()),
+        TransItem::DropGlue(dg, _) => characteristic_def_id_of_type(dg.ty()),
         TransItem::Static(node_id) => Some(tcx.map.local_def_id(node_id)),
     }
 }

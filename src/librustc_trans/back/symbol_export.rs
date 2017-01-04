@@ -15,7 +15,7 @@ use util::nodemap::FxHashMap;
 use rustc::hir::def_id::{DefId, CrateNum, LOCAL_CRATE};
 use rustc::session::config;
 use syntax::attr;
-use trans_item::TransItem;
+use trans_item::{TransItem, TransVariant};
 
 /// The SymbolExportLevel of a symbols specifies from which kinds of crates
 /// the symbol will be exported. `C` symbols will be exported from any
@@ -92,7 +92,9 @@ impl ExportedSymbols {
                 .exported_symbols(cnum)
                 .iter()
                 .map(|&def_id| {
-                    let name = Instance::mono(scx, def_id).symbol_name(scx);
+                    // Only scalar code gets exported
+                    let variant = TransVariant { simt: false };
+                    let name = Instance::mono(scx, def_id).symbol_name(scx, variant);
                     let export_level = export_level(scx, def_id);
                     debug!("EXPORTED SYMBOL (re-export): {} ({:?})", name, export_level);
                     (name, export_level)
@@ -189,7 +191,9 @@ fn symbol_for_def_id<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
 
     let instance = Instance::mono(scx, def_id);
 
-    symbol_map.get(TransItem::Fn(instance))
+    // Only scalar code gets exported
+    let variant = TransVariant { simt: false };
+    symbol_map.get(TransItem::Fn(instance, variant))
               .map(str::to_owned)
-              .unwrap_or_else(|| instance.symbol_name(scx))
+              .unwrap_or_else(|| instance.symbol_name(scx, variant))
 }

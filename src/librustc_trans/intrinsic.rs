@@ -25,6 +25,8 @@ use type_of;
 use machine;
 use type_::Type;
 use rustc::ty::{self, Ty};
+use trans_item::TransVariant;
+use callee::Callee;
 use rustc::hir;
 use syntax::ast;
 use syntax::symbol::Symbol;
@@ -80,6 +82,7 @@ fn get_simple_intrinsic(ccx: &CrateContext, name: &str) -> Option<ValueRef> {
         "roundf64" => "llvm.round.f64",
         "assume" => "llvm.assume",
         "abort" => "llvm.trap",
+        "simt_lane_id" => "llvm.nyuzi.simt_lane_id",
         _ => return None
     };
     Some(ccx.get_intrinsic(&llvm_name))
@@ -93,7 +96,8 @@ pub fn trans_intrinsic_call<'a, 'tcx>(bcx: &Builder<'a, 'tcx>,
                                       fn_ty: &FnType,
                                       llargs: &[ValueRef],
                                       llresult: ValueRef,
-                                      span: Span) {
+                                      span: Span,
+                                      _variant: TransVariant) {
     let ccx = bcx.ccx;
     let tcx = ccx.tcx();
 
@@ -346,6 +350,24 @@ pub fn trans_intrinsic_call<'a, 'tcx>(bcx: &Builder<'a, 'tcx>,
 
         },
 
+        "simt16" => {
+            let sty = &arg_tys[0].sty;
+            if let ty::TyFnDef(def_id, substs, _) = *sty {
+                let simt_llfn = Callee::def(ccx, def_id, substs, TransVariant { simt: true })
+                                    .reify(ccx);
+                let intrinsic = ccx.get_intrinsic("llvm.nyuzi.simt16");
+                // The *mut u8 arg is llargs[0] because the fn item is a ZST
+                bcx.call(intrinsic, &[simt_llfn, llargs[0]], None);
+                C_nil(ccx)
+            } else {
+                span_invalid_monomorphization_error(
+                    tcx.sess, span,
+                    &format!("invalid monomorphization of `{}` intrinsic: \
+                              expected fn item type, found `{}`", name, sty));
+                C_nil(ccx)
+            }
+        }
+
         "discriminant_value" => {
             let val_ty = substs.type_at(0);
             match val_ty.sty {
@@ -356,6 +378,7 @@ pub fn trans_intrinsic_call<'a, 'tcx>(bcx: &Builder<'a, 'tcx>,
                 _ => C_null(llret_ty)
             }
         }
+
         name if name.starts_with("simd_") => {
             generic_simd_intrinsic(bcx, name,
                                    callee_ty,

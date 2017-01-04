@@ -16,6 +16,7 @@ use rustc::traits::{ObligationCause, ObligationCauseCode};
 use rustc::ty::subst::Substs;
 use rustc::ty::{self, Ty};
 use rustc::util::nodemap::FxHashMap;
+//use rustc::util::common::FN_OUTPUT_NAME;
 use {CrateCtxt, require_same_types};
 
 use syntax::abi::Abi;
@@ -300,6 +301,16 @@ pub fn check_intrinsic_type(ccx: &CrateCtxt, it: &hir::ForeignItem) {
                 });
                 (0, vec![tcx.mk_fn_ptr(fn_ty), mut_u8, mut_u8], tcx.types.i32)
             }
+
+            "simt16" => {
+              // The signature is: fn simt16<F>(f: F, args: *mut u8);
+              // ... with the unchecked assumption that F is
+              // a fn item type with signature fn(*mut u8)
+              let mut_u8 = tcx.mk_mut_ptr(tcx.types.u8);
+              (1, vec![param(ccx, 0), mut_u8], tcx.mk_nil())
+            }
+
+            "simt_lane_id" => (0, vec![], tcx.types.usize),
 
             ref other => {
                 struct_span_err!(tcx.sess, it.span, E0093,

@@ -23,6 +23,7 @@ use type_of;
 use type_::Type;
 use value::Value;
 use glue;
+use trans_item::TransVariant;
 
 use std::ptr;
 
@@ -227,7 +228,8 @@ impl<'a, 'tcx> LvalueRef<'tcx> {
 impl<'a, 'tcx> MirContext<'a, 'tcx> {
     pub fn trans_lvalue(&mut self,
                         bcx: &Builder<'a, 'tcx>,
-                        lvalue: &mir::Lvalue<'tcx>)
+                        lvalue: &mir::Lvalue<'tcx>,
+                        variant: TransVariant)
                         -> LvalueRef<'tcx> {
         debug!("trans_lvalue(lvalue={:?})", lvalue);
 
@@ -257,7 +259,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 elem: mir::ProjectionElem::Deref
             }) => {
                 // Load the pointer from its location.
-                let ptr = self.trans_consume(bcx, base);
+                let ptr = self.trans_consume(bcx, base, variant);
                 let projected_ty = LvalueTy::from_ty(ptr.ty)
                     .projection_ty(tcx, &mir::ProjectionElem::Deref);
                 let projected_ty = self.monomorphize(&projected_ty);
@@ -273,7 +275,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 }
             }
             mir::Lvalue::Projection(ref projection) => {
-                let tr_base = self.trans_lvalue(bcx, &projection.base);
+                let tr_base = self.trans_lvalue(bcx, &projection.base, variant);
                 let projected_ty = tr_base.ty.projection_ty(tcx, &projection.elem);
                 let projected_ty = self.monomorphize(&projected_ty);
 
@@ -299,7 +301,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                         (tr_base.trans_field_ptr(bcx, field.index()), llextra)
                     }
                     mir::ProjectionElem::Index(ref index) => {
-                        let index = self.trans_operand(bcx, index);
+                        let index = self.trans_operand(bcx, index, variant);
                         (project_index(self.prepare_index(bcx, index.immediate())), ptr::null_mut())
                     }
                     mir::ProjectionElem::ConstantIndex { offset,
@@ -358,7 +360,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
     // If the Lvalue is an empty LocalRef::Operand, then a temporary stack slot
     // is created first, then used as an operand to update the Lvalue.
     pub fn with_lvalue_ref<F, U>(&mut self, bcx: &Builder<'a, 'tcx>,
-                                 lvalue: &mir::Lvalue<'tcx>, f: F) -> U
+                                 lvalue: &mir::Lvalue<'tcx>, variant: TransVariant, f: F) -> U
     where F: FnOnce(&mut Self, LvalueRef<'tcx>) -> U
     {
         if let mir::Lvalue::Local(index) = *lvalue {
@@ -388,7 +390,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 }
             }
         } else {
-            let lvalue = self.trans_lvalue(bcx, lvalue);
+            let lvalue = self.trans_lvalue(bcx, lvalue, variant);
             f(self, lvalue)
         }
     }

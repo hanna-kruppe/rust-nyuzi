@@ -18,11 +18,13 @@ use super::MirContext;
 use super::LocalRef;
 use super::super::adt;
 use super::super::disr::Disr;
+use trans_item::TransVariant;
 
 impl<'a, 'tcx> MirContext<'a, 'tcx> {
     pub fn trans_statement(&mut self,
                            bcx: Builder<'a, 'tcx>,
-                           statement: &mir::Statement<'tcx>)
+                           statement: &mir::Statement<'tcx>,
+                           variant: TransVariant)
                            -> Builder<'a, 'tcx> {
         debug!("trans_statement(statement={:?})", statement);
 
@@ -32,10 +34,10 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 if let mir::Lvalue::Local(index) = *lvalue {
                     match self.locals[index] {
                         LocalRef::Lvalue(tr_dest) => {
-                            self.trans_rvalue(bcx, tr_dest, rvalue)
+                            self.trans_rvalue(bcx, tr_dest, rvalue, variant)
                         }
                         LocalRef::Operand(None) => {
-                            let (bcx, operand) = self.trans_rvalue_operand(bcx, rvalue);
+                            let (bcx, operand) = self.trans_rvalue_operand(bcx, rvalue, variant);
                             self.locals[index] = LocalRef::Operand(Some(operand));
                             bcx
                         }
@@ -49,18 +51,18 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                             } else {
                                 // If the type is zero-sized, it's already been set here,
                                 // but we still need to make sure we translate the operand
-                                self.trans_rvalue_operand(bcx, rvalue).0
+                                self.trans_rvalue_operand(bcx, rvalue, variant).0
                             }
                         }
                     }
                 } else {
-                    let tr_dest = self.trans_lvalue(&bcx, lvalue);
-                    self.trans_rvalue(bcx, tr_dest, rvalue)
+                    let tr_dest = self.trans_lvalue(&bcx, lvalue, variant);
+                    self.trans_rvalue(bcx, tr_dest, rvalue, variant)
                 }
             }
             mir::StatementKind::SetDiscriminant{ref lvalue, variant_index} => {
                 let ty = self.monomorphized_lvalue_ty(lvalue);
-                let lvalue_transed = self.trans_lvalue(&bcx, lvalue);
+                let lvalue_transed = self.trans_lvalue(&bcx, lvalue, variant);
                 adt::trans_set_discr(&bcx,
                     ty,
                     lvalue_transed.llval,
