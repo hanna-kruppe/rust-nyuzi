@@ -909,6 +909,8 @@ impl<'a, 'tcx> FnType<'tcx> {
             "nvptx" => cabi_nvptx::compute_abi_info(ccx, self),
             "nvptx64" => cabi_nvptx64::compute_abi_info(ccx, self),
             "hexagon" => cabi_hexagon::compute_abi_info(ccx, self),
+            // FIXME(rkruppe) this is a silly stopgap
+            "nyuzi" => cabi_asmjs::compute_abi_info(ccx, self),
             a => ccx.sess().fatal(&format!("unrecognized arch \"{}\" in target specification", a))
         }
 
