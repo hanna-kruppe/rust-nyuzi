@@ -617,6 +617,8 @@ impl FnType {
             "sparc64" => cabi_sparc64::compute_abi_info(ccx, self),
             "nvptx" => cabi_nvptx::compute_abi_info(ccx, self),
             "nvptx64" => cabi_nvptx64::compute_abi_info(ccx, self),
+            // FIXME(rkruppe) this is a silly stopgap
+            "nyuzi" => cabi_asmjs::compute_abi_info(ccx, self),
             a => ccx.sess().fatal(&format!("unrecognized arch \"{}\" in target specification", a))
         }
 

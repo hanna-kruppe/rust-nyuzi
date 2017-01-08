@@ -361,10 +361,6 @@ pub fn initialize_available_targets() {
                  LLVMInitializeSystemZTargetMC,
                  LLVMInitializeSystemZAsmPrinter,
                  LLVMInitializeSystemZAsmParser);
-    init_target!(llvm_component = "jsbackend",
-                 LLVMInitializeJSBackendTargetInfo,
-                 LLVMInitializeJSBackendTarget,
-                 LLVMInitializeJSBackendTargetMC);
     init_target!(llvm_component = "msp430",
                  LLVMInitializeMSP430TargetInfo,
                  LLVMInitializeMSP430Target,
@@ -381,6 +377,12 @@ pub fn initialize_available_targets() {
                  LLVMInitializeNVPTXTarget,
                  LLVMInitializeNVPTXTargetMC,
                  LLVMInitializeNVPTXAsmPrinter);
+    init_target!(llvm_component = "nyuzi",
+                 LLVMInitializeNyuziTargetInfo,
+                 LLVMInitializeNyuziTarget,
+                 LLVMInitializeNyuziTargetMC,
+                 LLVMInitializeNyuziAsmPrinter,
+                 LLVMInitializeNyuziAsmParser);
 }
 
 pub fn last_error() -> Option<String> {
