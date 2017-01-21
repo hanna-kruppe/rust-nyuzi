@@ -183,10 +183,8 @@ fn symbol_for_def_id<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
                                -> String {
     // Just try to look things up in the symbol map. If nothing's there, we
     // recompute.
-    if let Some(node_id) = scx.tcx().map.as_local_node_id(def_id) {
-        if let Some(sym) = symbol_map.get(TransItem::Static(node_id)) {
-            return sym.to_owned();
-        }
+    if let Some(sym) = symbol_map.get(TransItem::Static(def_id)) {
+        return sym.to_owned();
     }
 
     let instance = Instance::mono(scx, def_id);

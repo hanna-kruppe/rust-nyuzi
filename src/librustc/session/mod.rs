@@ -365,6 +365,9 @@ impl Session {
     pub fn lto(&self) -> bool {
         self.opts.cg.lto
     }
+    pub fn whole_program(&self) -> bool {
+        self.target.target.options.whole_program
+    }
     /// Returns the panic strategy for this compile session. If the user explicitly selected one
     /// using '-C panic', use that, otherwise use the panic strategy defined by the target.
     pub fn panic_strategy(&self) -> PanicStrategy {

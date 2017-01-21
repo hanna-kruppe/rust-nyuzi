@@ -185,13 +185,15 @@ impl<'tcx> CodegenUnit<'tcx> {
             symbol_name.len().hash(&mut state);
             symbol_name.hash(&mut state);
             let exported = match item {
-               TransItem::Fn(ref instance, _) => {
+               TransItem::Fn(ref instance, _todo) => {
                     let node_id = scx.tcx().map.as_local_node_id(instance.def);
                     node_id.map(|node_id| exported_symbols.contains(&node_id))
                            .unwrap_or(false)
                }
-               TransItem::Static(node_id) => {
-                    exported_symbols.contains(&node_id)
+               TransItem::Static(def_id) => {
+                    let node_id = scx.tcx().map.as_local_node_id(def_id);
+                    node_id.map(|node_id| exported_symbols.contains(&node_id))
+                           .unwrap_or(false)
                }
                TransItem::DropGlue(..) => false,
             };
@@ -243,7 +245,7 @@ impl<'tcx> CodegenUnit<'tcx> {
                 TransItem::Fn(instance, _) => {
                     tcx.map.as_local_node_id(instance.def)
                 }
-                TransItem::Static(node_id) => Some(node_id),
+                TransItem::Static(def_id) => tcx.map.as_local_node_id(def_id),
                 TransItem::DropGlue(..) => None,
             }
         }
@@ -482,7 +484,7 @@ fn characteristic_def_id_of_trans_item<'a, 'tcx>(scx: &SharedCrateContext<'a, 't
             Some(instance.def)
         }
         TransItem::DropGlue(dg, _) => characteristic_def_id_of_type(dg.ty()),
-        TransItem::Static(node_id) => Some(tcx.map.local_def_id(node_id)),
+        TransItem::Static(def_id) => Some(def_id),
     }
 }
 

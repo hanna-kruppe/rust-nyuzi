@@ -102,7 +102,7 @@ impl<'tcx> SymbolMap<'tcx> {
                 TransItem::Fn(Instance { def, .. }, _) => {
                     tcx.map.as_local_node_id(def)
                 }
-                TransItem::Static(node_id) => Some(node_id),
+                TransItem::Static(def) => tcx.map.as_local_node_id(def),
                 TransItem::DropGlue(..) => None,
             }.map(|node_id| {
                 tcx.map.span(node_id)

@@ -548,7 +548,8 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
             let is_const_fn = sig.constness == hir::Constness::Const;
             let ast = if is_const_fn { Some(body) } else { None };
             let always_encode_mir = self.tcx.sess.opts.debugging_opts.always_encode_mir;
-            (ast, needs_inline || is_const_fn || always_encode_mir)
+            let whole_program = self.tcx.sess.whole_program();
+            (ast, needs_inline || is_const_fn || always_encode_mir || whole_program)
         } else {
             (None, false)
         };
@@ -806,7 +807,8 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
                 _ => None,
             },
             mir: match item.node {
-                hir::ItemStatic(..) if self.tcx.sess.opts.debugging_opts.always_encode_mir => {
+                hir::ItemStatic(..) if self.tcx.sess.opts.debugging_opts.always_encode_mir ||
+                    self.tcx.sess.whole_program() => {
                     self.encode_mir(def_id)
                 }
                 hir::ItemConst(..) => self.encode_mir(def_id),
@@ -814,7 +816,9 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
                     let tps_len = generics.ty_params.len();
                     let needs_inline = tps_len > 0 || attr::requests_inline(&item.attrs);
                     let always_encode_mir = self.tcx.sess.opts.debugging_opts.always_encode_mir;
-                    if needs_inline || constness == hir::Constness::Const || always_encode_mir {
+                    let whole_program = self.tcx.sess.whole_program();
+                    if needs_inline || constness == hir::Constness::Const ||
+                        always_encode_mir || whole_program {
                         self.encode_mir(def_id)
                     } else {
                         None

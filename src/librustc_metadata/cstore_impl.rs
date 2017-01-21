@@ -44,6 +44,18 @@ impl<'tcx> CrateStore<'tcx> for cstore::CStore {
         self.get_crate_data(def.krate).get_def(def.index)
     }
 
+    fn all_defs(&self) -> Vec<Def> {
+        let mut result = vec![];
+        self.iter_crate_data(|_, cdata| {
+            for i in 0..cdata.def_path_table.def_index_count() {
+                if let Some(def) = cdata.maybe_get_def(DefIndex::new(i)) {
+                    result.push(def);
+                }
+            }
+        });
+        result
+    }
+
     fn def_span(&self, sess: &Session, def: DefId) -> Span {
         self.dep_graph.read(DepNode::MetaData(def));
         self.get_crate_data(def.krate).get_span(def.index, sess)

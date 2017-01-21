@@ -487,7 +487,18 @@ impl<'a, 'tcx> CrateMetadata {
     pub fn get_def(&self, index: DefIndex) -> Option<Def> {
         match self.is_proc_macro(index) {
             true => Some(Def::Macro(self.local_def_id(index))),
+            //false => self.entry(index).kind.to_def(self.local_def_id(index)),
             false => self.entry(index).kind.to_def(self.local_def_id(index)),
+        }
+    }
+
+    pub fn maybe_get_def(&self, index: DefIndex) -> Option<Def> {
+        match self.is_proc_macro(index) {
+            true => Some(Def::Macro(self.local_def_id(index))),
+            //false => self.entry(index).kind.to_def(self.local_def_id(index)),
+            false => self.maybe_entry(index).and_then(|item| {
+                item.decode(self).kind.to_def(self.local_def_id(index))
+            })
         }
     }
 

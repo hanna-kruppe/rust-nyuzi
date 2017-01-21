@@ -1157,7 +1157,9 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     // Skip crate items and just output metadata in -Z no-trans mode.
     if tcx.sess.opts.debugging_opts.no_trans ||
-       !tcx.sess.opts.output_types.should_trans() {
+       !tcx.sess.opts.output_types.should_trans() ||
+        (tcx.sess.whole_program() &&
+        tcx.sess.crate_types.borrow().contains(&config::CrateTypeRlib)) {
         let empty_exported_symbols = ExportedSymbols::empty();
         let linker_info = LinkerInfo::new(&shared_ccx, &empty_exported_symbols);
         return CrateTranslation {

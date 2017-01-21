@@ -165,6 +165,7 @@ pub struct ExternCrate {
 pub trait CrateStore<'tcx> {
     // item info
     fn describe_def(&self, def: DefId) -> Option<Def>;
+    fn all_defs(&self) -> Vec<Def>;
     fn def_span(&self, sess: &Session, def: DefId) -> Span;
     fn stability(&self, def: DefId) -> Option<attr::Stability>;
     fn deprecation(&self, def: DefId) -> Option<attr::Deprecation>;
@@ -312,6 +313,7 @@ pub struct DummyCrateStore;
 impl<'tcx> CrateStore<'tcx> for DummyCrateStore {
     // item info
     fn describe_def(&self, def: DefId) -> Option<Def> { bug!("describe_def") }
+    fn all_defs(&self) -> Vec<Def> { bug!("all_defs") }
     fn def_span(&self, sess: &Session, def: DefId) -> Span { bug!("def_span") }
     fn stability(&self, def: DefId) -> Option<attr::Stability> { bug!("stability") }
     fn deprecation(&self, def: DefId) -> Option<attr::Deprecation> { bug!("deprecation") }

@@ -96,12 +96,12 @@ pub fn get_static(ccx: &CrateContext, def_id: DefId) -> ValueRef {
                 ref attrs, span, node: hir::ItemStatic(..), ..
             }) => {
                 let sym = ccx.symbol_map()
-                             .get(TransItem::Static(id))
+                             .get(TransItem::Static(def_id))
                              .expect("Local statics should always be in the SymbolMap");
 
                 let defined_in_current_codegen_unit = ccx.codegen_unit()
                                                          .items()
-                                                         .contains_key(&TransItem::Static(id));
+                                                         .contains_key(&TransItem::Static(def_id));
                 assert!(!defined_in_current_codegen_unit);
 
                 if declare::get_declared_value(ccx, sym).is_some() {
@@ -218,12 +218,11 @@ pub fn get_static(ccx: &CrateContext, def_id: DefId) -> ValueRef {
 }
 
 pub fn trans_static(ccx: &CrateContext,
-                    m: hir::Mutability,
-                    id: ast::NodeId,
+                    is_mutable: bool,
+                    def_id: DefId,
                     attrs: &[ast::Attribute])
                     -> Result<ValueRef, ConstEvalErr> {
     unsafe {
-        let def_id = ccx.tcx().map.local_def_id(id);
         let g = get_static(ccx, def_id);
 
         let v = ::mir::trans_static_initializer(ccx, def_id)?;
@@ -262,14 +261,16 @@ pub fn trans_static(ccx: &CrateContext,
 
         // As an optimization, all shared statics which do not have interior
         // mutability are placed into read-only memory.
-        if m != hir::MutMutable {
+        if !is_mutable {
             let tcontents = ty.type_contents(ccx.tcx());
             if !tcontents.interior_unsafe() {
                 llvm::LLVMSetGlobalConstant(g, llvm::True);
             }
         }
 
-        debuginfo::create_global_var_metadata(ccx, id, g);
+        if let Some(node_id) = ccx.tcx().map.as_local_node_id(def_id) {
+            debuginfo::create_global_var_metadata(ccx, node_id, g);
+        }
 
         if attr::contains_name(attrs,
                                "thread_local") {

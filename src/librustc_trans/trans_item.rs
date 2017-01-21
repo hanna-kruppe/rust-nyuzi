@@ -25,11 +25,12 @@ use llvm;
 use monomorphize::{self, Instance};
 use rustc::dep_graph::DepNode;
 use rustc::hir;
+use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
 use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
 use rustc::ty::subst::Substs;
 use rustc_const_eval::fatal_const_eval_err;
-use syntax::ast::{self, NodeId};
+use syntax::ast;
 use syntax::attr;
 use type_of;
 use glue;
@@ -53,7 +54,7 @@ impl TransVariant {
 pub enum TransItem<'tcx> {
     DropGlue(DropGlueKind<'tcx>, TransVariant),
     Fn(Instance<'tcx>, TransVariant),
-    Static(NodeId),
+    Static(DefId),
 }
 
 /// Describes how a translation item will be instantiated in object files.
@@ -87,21 +88,34 @@ impl<'a, 'tcx> TransItem<'tcx> {
         // particular set.
 
         match *self {
-            TransItem::Static(node_id) => {
-                let def_id = ccx.tcx().map.local_def_id(node_id);
+            TransItem::Static(def_id) => {
                 let _task = ccx.tcx().dep_graph.in_task(DepNode::TransCrateItem(def_id)); // (*)
-                let item = ccx.tcx().map.expect_item(node_id);
-                if let hir::ItemStatic(_, m, _) = item.node {
-                    match consts::trans_static(&ccx, m, item.id, &item.attrs) {
-                        Ok(_) => { /* Cool, everything's alright. */ },
-                        Err(err) => {
-                            // FIXME: shouldn't this be a `span_err`?
-                            fatal_const_eval_err(
-                                ccx.tcx(), &err, item.span, "static");
-                        }
-                    };
+                let span = ccx.tcx().item_mir(def_id).span;
+                let attrs = ccx.tcx().get_attrs(def_id);
+                let is_mutable;
+                if def_id.is_local() {
+                    let node_id = ccx.tcx().map.as_local_node_id(def_id).unwrap();
+                    let item = ccx.tcx().map.expect_item(node_id);
+                    if let hir::ItemStatic(_, m, _) = item.node {
+                        is_mutable = m == hir::MutMutable;
+                    } else {
+                        span_bug!(span, "Mismatch between hir::Item type and TransItem type")
+                    }
                 } else {
-                    span_bug!(item.span, "Mismatch between hir::Item type and TransItem type")
+                    let item = ccx.sess().cstore.describe_def(def_id);
+                    if let Some(Def::Static(_, m)) = item {
+                        is_mutable = m;
+                    } else {
+                        span_bug!(span, "Mismatch between hir::def::Def type and TransItem type")
+                    }
+                }
+                match consts::trans_static(&ccx, is_mutable, def_id, &attrs) {
+                    Ok(_) => { /* Cool, everything's alright. */ },
+                    Err(err) => {
+                        // FIXME: shouldn't this be a `span_err`?
+                        fatal_const_eval_err(
+                            ccx.tcx(), &err, span, "static");
+                    }
                 }
             }
             TransItem::Fn(instance, variant) => {
@@ -135,8 +149,8 @@ impl<'a, 'tcx> TransItem<'tcx> {
         debug!("symbol {}", &symbol_name);
 
         match *self {
-            TransItem::Static(node_id) => {
-                TransItem::predefine_static(ccx, node_id, linkage, &symbol_name);
+            TransItem::Static(def_id) => {
+                TransItem::predefine_static(ccx, def_id, linkage, &symbol_name);
             }
             TransItem::Fn(instance, variant) => {
                 TransItem::predefine_fn(ccx, instance, linkage, &symbol_name, variant);
@@ -153,15 +167,14 @@ impl<'a, 'tcx> TransItem<'tcx> {
     }
 
     fn predefine_static(ccx: &CrateContext<'a, 'tcx>,
-                        node_id: ast::NodeId,
+                        def_id: DefId,
                         linkage: llvm::Linkage,
                         symbol_name: &str) {
-        let def_id = ccx.tcx().map.local_def_id(node_id);
         let ty = ccx.tcx().item_type(def_id);
         let llty = type_of::type_of(ccx, ty);
 
         let g = declare::define_global(ccx, symbol_name, llty).unwrap_or_else(|| {
-            ccx.sess().span_fatal(ccx.tcx().map.span(node_id),
+            ccx.sess().span_fatal(ccx.tcx().item_mir(def_id).span,
                 &format!("symbol `{}` is already defined", symbol_name))
         });
 
@@ -235,8 +248,7 @@ impl<'a, 'tcx> TransItem<'tcx> {
                                scx: &SharedCrateContext<'a, 'tcx>) -> String {
         match *self {
             TransItem::Fn(instance, variant) => instance.symbol_name(scx, variant),
-            TransItem::Static(node_id) => {
-                let def_id = scx.tcx().map.local_def_id(node_id);
+            TransItem::Static(def_id) => {
                 Instance::mono(scx, def_id).symbol_name(scx, TransVariant { simt: false })
             }
             TransItem::DropGlue(dg, TransVariant { simt }) => {
@@ -290,7 +302,7 @@ impl<'a, 'tcx> TransItem<'tcx> {
     pub fn explicit_linkage(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> Option<llvm::Linkage> {
         let def_id = match *self {
             TransItem::Fn(ref instance, _) => instance.def,
-            TransItem::Static(node_id) => tcx.map.local_def_id(node_id),
+            TransItem::Static(def_id) => def_id,
             TransItem::DropGlue(..) => return None,
         };
 
@@ -312,8 +324,6 @@ impl<'a, 'tcx> TransItem<'tcx> {
     }
 
     pub fn to_string(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> String {
-        let hir_map = &tcx.map;
-
         return match *self {
             TransItem::DropGlue(dg, TransVariant { simt }) => {
                 let mut s = String::with_capacity(32);
@@ -332,8 +342,7 @@ impl<'a, 'tcx> TransItem<'tcx> {
                 let suffix = if simt { "[simt]" } else { "" };
                 to_string_internal(tcx, "fn ", instance, suffix)
             },
-            TransItem::Static(node_id) => {
-                let def_id = hir_map.local_def_id(node_id);
+            TransItem::Static(def_id) => {
                 let instance = Instance::new(def_id, tcx.intern_substs(&[]));
                 to_string_internal(tcx, "static ", instance, "")
             },

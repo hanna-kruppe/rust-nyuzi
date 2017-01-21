@@ -669,7 +669,8 @@ pub fn run_passes(sess: &Session,
     assert!(trans.modules.len() == sess.opts.cg.codegen_units ||
             sess.opts.debugging_opts.incremental.is_some() ||
             !sess.opts.output_types.should_trans() ||
-            sess.opts.debugging_opts.no_trans);
+            sess.opts.debugging_opts.no_trans ||
+            (sess.whole_program() && sess.crate_types.borrow().contains(&config::CrateTypeRlib)));
 
     let tm = create_target_machine(sess);
 

@@ -192,6 +192,7 @@ use rustc::hir;
 use rustc::hir::itemlikevisit::ItemLikeVisitor;
 
 use rustc::hir::map as hir_map;
+use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
 use rustc::middle::lang_items::{BoxFreeFnLangItem, ExchangeMallocFnLangItem};
 use rustc::traits;
@@ -312,6 +313,35 @@ fn collect_roots<'a, 'tcx>(scx: &SharedCrateContext<'a, 'tcx>,
         scx.tcx().map.krate().visit_all_item_likes(&mut visitor);
     }
 
+    if scx.sess().whole_program() {
+        // The roots are scalar code
+        let variant = TransVariant { simt: false };
+        for def in scx.sess().cstore.all_defs() {
+            match def {
+                Def::Fn(def_id) => {
+                    let generics = scx.tcx().item_generics(def_id);
+                    let is_monomorphic = generics.parent_types == 0 && generics.types.is_empty();
+                    let is_not_intrinsic = scx.sess().cstore.is_item_mir_available(def_id);
+                    if is_monomorphic && is_not_intrinsic {
+                        debug!("collect_roots: Def::Fn({})",
+                               def_id_to_string(scx.tcx(), def_id));
+                        let instance = Instance::mono(scx, def_id);
+                        roots.push(TransItem::Fn(instance, variant));
+                    }
+                }
+                Def::Static(def_id, _) => {
+                    debug!("collect_roots: Def::Static({})",
+                           def_id_to_string(scx.tcx(), def_id));
+                    roots.push(TransItem::Static(def_id));
+                }
+                _ => {
+                    // FIXME(rkruppe) eager mode is not supported, and this leads to some
+                    // simplifications: no need to collect default impl items, ADT drop glue
+                }
+            }
+        }
+    }
+
     roots
 }
 
@@ -335,9 +365,7 @@ fn collect_items_rec<'a, 'tcx: 'a>(scx: &SharedCrateContext<'a, 'tcx>,
             find_drop_glue_neighbors(scx, t, &mut neighbors, variant);
             recursion_depth_reset = None;
         }
-        TransItem::Static(node_id) => {
-            let def_id = scx.tcx().map.local_def_id(node_id);
-
+        TransItem::Static(def_id) => {
             // Sanity check whether this ended up being collected accidentally
             debug_assert!(should_trans_locally(scx.tcx(), def_id));
 
@@ -726,6 +754,10 @@ fn should_trans_locally<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                   -> bool {
     if def_id.is_local() {
         true
+    } else if tcx.sess.whole_program() {
+        // Intrinsics (and presumably foreign items) simply can't be trans'd
+        tcx.sess.cstore.is_item_mir_available(def_id)
+        // FIXME(rkruppe) statics from upstream crates don't get picked up =/
     } else {
         if tcx.sess.cstore.is_exported_symbol(def_id) ||
            tcx.sess.cstore.is_foreign_item(def_id) {
@@ -1210,10 +1242,10 @@ impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
                 }
             }
             hir::ItemStatic(..) => {
+                let def_id = self.scx.tcx().map.local_def_id(item.id);
                 debug!("RootCollector: ItemStatic({})",
-                       def_id_to_string(self.scx.tcx(),
-                                        self.scx.tcx().map.local_def_id(item.id)));
-                self.output.push(TransItem::Static(item.id));
+                       def_id_to_string(self.scx.tcx(), def_id));
+                self.output.push(TransItem::Static(def_id));
             }
             hir::ItemConst(..) => {
                 // const items only generate translation items if they are

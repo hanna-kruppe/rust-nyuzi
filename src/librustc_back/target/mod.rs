@@ -395,6 +395,10 @@ pub struct TargetOptions {
 
     /// Whether or not the CRT is statically linked by default.
     pub crt_static_default: bool,
+
+    /// Whether the target requires access to all MIR for all code at once.
+    /// This implies MIR-only rlibs.
+    pub whole_program: bool,
 }
 
 impl Default for TargetOptions {
@@ -451,6 +455,7 @@ impl Default for TargetOptions {
             panic_strategy: PanicStrategy::Unwind,
             abi_blacklist: vec![],
             crt_static_default: false,
+            whole_program: false,
         }
     }
 }
@@ -621,6 +626,7 @@ impl Target {
         key!(min_atomic_width, Option<u64>);
         try!(key!(panic_strategy, PanicStrategy));
         key!(crt_static_default, bool);
+        key!(whole_program, bool);
 
         if let Some(array) = obj.find("abi-blacklist").and_then(Json::as_array) {
             for name in array.iter().filter_map(|abi| abi.as_string()) {

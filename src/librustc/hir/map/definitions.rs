@@ -89,6 +89,10 @@ impl DefPathTable {
 
         Some(index)
     }
+
+    pub fn def_index_count(&self) -> usize {
+        self.index_to_key.len()
+    }
 }
 
 
