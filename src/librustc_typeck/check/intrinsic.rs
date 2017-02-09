@@ -301,6 +301,23 @@ pub fn check_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 (0, vec![tcx.mk_fn_ptr(fn_ty), mut_u8, mut_u8], tcx.types.i32)
             }
 
+            "spmd_call" => {
+              // The signature is: fn spmd_call(f: unsafe fn(*mut u8), args: *mut u8);
+              // ... with the unchecked assumption that f is a static call,
+              // not a variable/non-constant function pointer
+              let mut_u8 = tcx.mk_mut_ptr(tcx.types.u8);
+              let fn_ty = ty::Binder(tcx.mk_fn_sig(
+                  iter::once(mut_u8),
+                  tcx.mk_nil(),
+                  false,
+                  hir::Unsafety::Normal,
+                  Abi::Rust,
+              ));
+              (0, vec![tcx.mk_fn_ptr(fn_ty), mut_u8], tcx.mk_nil())
+            }
+
+            "spmd_lane_id" => (0, vec![], tcx.types.usize),
+
             ref other => {
                 struct_span_err!(tcx.sess, it.span, E0093,
                                 "unrecognized intrinsic function: `{}`",

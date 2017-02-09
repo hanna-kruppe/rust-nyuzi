@@ -1273,4 +1273,13 @@ extern "rust-intrinsic" {
     /// on MSVC it's `*mut [usize; 2]`. For more information see the compiler's
     /// source as well as std's catch implementation.
     pub fn try(f: fn(*mut u8), data: *mut u8, local_ptr: *mut u8) -> i32;
+
+
+    /// FIME(rkruppe) write docs
+    #[cfg(all(not(stage0), target_arch="nyuzi"))]
+    pub fn spmd_call(f: fn(*mut u8), arg: *mut u8);
+
+    /// FIXME(rkruppe) write docs
+    #[cfg(all(not(stage0), target_arch="nyuzi"))]
+    pub fn spmd_lane_id() -> usize;
 }

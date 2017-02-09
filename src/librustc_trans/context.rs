@@ -943,6 +943,9 @@ fn declare_intrinsic(ccx: &CrateContext, key: &str) -> Option<ValueRef> {
 
     ifn!("llvm.assume", fn(i1) -> void);
 
+    ifn!("llvm.spmd.call", fn(i8p, i8p) -> void);
+    ifn!("llvm.spmd.lane_id", fn() -> t_i32);
+
     if ccx.sess().opts.debuginfo != NoDebugInfo {
         ifn!("llvm.dbg.declare", fn(Type::metadata(ccx), Type::metadata(ccx)) -> void);
         ifn!("llvm.dbg.value", fn(Type::metadata(ccx), t_i64, Type::metadata(ccx)) -> void);
