@@ -347,7 +347,9 @@ struct CodegenContext<'a> {
     worker: usize,
     // The incremental compilation session directory, or None if we are not
     // compiling incrementally
-    incr_comp_session_dir: Option<PathBuf>
+    incr_comp_session_dir: Option<PathBuf>,
+    // True iff the SPMD lowering pass should run.
+    spmd: bool,
 }
 
 impl<'a> CodegenContext<'a> {
@@ -360,7 +362,8 @@ impl<'a> CodegenContext<'a> {
             plugin_passes: sess.plugin_llvm_passes.borrow().clone(),
             remark: sess.opts.cg.remark.clone(),
             worker: 0,
-            incr_comp_session_dir: sess.incr_comp_session_dir_opt().map(|r| r.clone())
+            incr_comp_session_dir: sess.incr_comp_session_dir_opt().map(|r| r.clone()),
+            spmd: sess.target.target.options.spmd,
         }
     }
 }
@@ -496,6 +499,19 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
                 llvm::LLVMPassManagerBuilderPopulateFunctionPassManager(b, fpm);
                 llvm::LLVMPassManagerBuilderPopulateModulePassManager(b, mpm);
             })
+        }
+
+        if cgcx.spmd {
+            assert!(addpass("lowerswitch"));
+            assert!(addpass("mergereturn"));
+            assert!(addpass("loop-simplify"));
+            assert!(addpass("lowerspmd"));
+            // FIXME(rkruppe) figure out a sensible set of passes
+            // for cleaning up after SPMD lowering
+            assert!(addpass("instcombine"));
+            assert!(addpass("adce"));
+            assert!(addpass("simplifycfg"));
+            assert!(addpass("globaldce"));
         }
 
         for pass in &config.passes {
@@ -1053,6 +1069,7 @@ fn run_work_multithreaded(sess: &Session,
     let mut diag_emitter = SharedEmitter::new();
     let mut futures = Vec::with_capacity(num_workers);
 
+    let spmd = sess.target.target.options.spmd;
     for i in 0..num_workers {
         let work_items_arc = work_items_arc.clone();
         let diag_emitter = diag_emitter.clone();
@@ -1079,7 +1096,8 @@ fn run_work_multithreaded(sess: &Session,
                 plugin_passes: plugin_passes,
                 remark: remark,
                 worker: i,
-                incr_comp_session_dir: incr_comp_session_dir
+                incr_comp_session_dir: incr_comp_session_dir,
+                spmd
             };
 
             loop {
