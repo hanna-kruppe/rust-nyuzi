@@ -481,6 +481,7 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
             }
             let pass_manager = match llvm::LLVMRustPassKind(pass) {
                 llvm::PassKind::Function => fpm,
+                llvm::PassKind::CallGraphSCC |
                 llvm::PassKind::Module => mpm,
                 llvm::PassKind::Other => {
                     cgcx.handler.err("Encountered LLVM pass kind we can't handle");

@@ -62,6 +62,7 @@ enum class LLVMRustPassKind {
   Other,
   Function,
   Module,
+  CallGraphSCC,
 };
 
 static LLVMRustPassKind toRust(PassKind Kind) {
@@ -70,6 +71,8 @@ static LLVMRustPassKind toRust(PassKind Kind) {
     return LLVMRustPassKind::Function;
   case PT_Module:
     return LLVMRustPassKind::Module;
+  case PT_CallGraphSCC:
+    return LLVMRustPassKind::CallGraphSCC;
   default:
     return LLVMRustPassKind::Other;
   }

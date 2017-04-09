@@ -343,6 +343,7 @@ pub enum PassKind {
     Other,
     Function,
     Module,
+    CallGraphSCC,
 }
 
 // Opaque pointer types
