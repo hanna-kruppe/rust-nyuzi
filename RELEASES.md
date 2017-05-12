@@ -45,6 +45,17 @@ Libraries
   2.50%~ faster and in one case now 12.50% faster.
 - [Optimized `AtomicBool::fetch_nand`][41143]
 
+Stabilized APIs
+---------------
+
+- [`TryFrom`]
+- [`TryInto`]
+- [`HashMap::retain`]
+- [`HashSet::retain`]
+- [`TcpSteam::peek`]
+- [`UdpSocket::peek`]
+- [`UdpSocket::peek_from`]
+- [`Child::try_wait`]
 
 Cargo
 -----
@@ -113,6 +124,15 @@ Compatibility Notes
 [cargo/3901]: https://github.com/rust-lang/cargo/pull/3901
 [cargo/3947]: https://github.com/rust-lang/cargo/pull/3947
 [cargo/3952]: https://github.com/rust-lang/cargo/pull/3952
+[`TryFrom`]: https://doc.rust-lang.org/std/convert/trait.TryFrom.html
+[`TryInto`]: https://doc.rust-lang.org/std/convert/trait.TryInto.html
+[`HashMap::retain`]: https://doc.rust-lang.org/std/collections/struct.HashMap.html#method.retain
+[`HashSet::retain`]: https://doc.rust-lang.org/std/collections/struct.HashSet.html#method.retain
+[`TcpSteam::peek`]: https://doc.rust-lang.org/std/net/struct.TcpStream.html#method.peek
+[`UdpSocket::peek`]: https://doc.rust-lang.org/std/net/struct.UdpSocket.html#method.peek
+[`UdpSocket::peek_from`]: https://doc.rust-lang.org/std/net/struct.UdpSocket.html#method.peek_from
+[`Child::try_wait`]: https://doc.rust-lang.org/std/process/struct.Child.html#method.try_wait
+
 
 Version 1.17.0 (2017-04-27)
 ===========================
