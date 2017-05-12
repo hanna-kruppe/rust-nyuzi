@@ -1,3 +1,119 @@
+Version 1.18.0 (2017-06-08)
+===========================
+
+Language
+--------
+
+- [Stabilize pub(restricted)][40556] `pub` can now accept a module path to
+  make the item visible to just that module tree. Also accepts the keyword
+  `crate` to make something public to the whole crate but not users of the
+  library. Example: `pub(crate) mod utils;`.
+- [Stabilize `#![windows_subsystem]` attribute][40870] conservative exposure of the
+  `/SUBSYSTEM` linker flag on Windows platforms.
+- [Refactor of trait object type parsing][40043] Now `ty` in macros can accept
+  types like `Write + Send`, trailing `+` are now supported in trait objects,
+  and better error reporting for trait objects starting with `?Sized`.
+- [0e+10 is now a valid floating point literal][40589]
+- [Now warns if you bind a lifetime parameter to 'static][40734]
+
+Compiler
+--------
+
+- [LLVM backend upgraded to 4.0][40123]
+- [rustc can now emit mir with `--emit mir`][39891]
+- [Improved LLVM IR for trivial functions][40367]
+- [Added explanation for E0090(Wrong number of lifetimes are supplied)][40723]
+- [Rustc is now faster][41469]
+- [Improved backtrace formatting when panicking][38165]
+
+Libraries
+---------
+
+- [Specialized `Vec::from_iter` being passed `vec::IntoIter`][40731] if the
+  iterator hasn't been advanced the original `Vec` is reassembled with no actual
+  iteration or reallocation.
+- [Simplified HashMap Bucket interface][40561] provides performance
+  improvements for iterating and cloning.
+- [Specialize Vec::from_elem to use calloc][40409]
+- [Fixed Race condition in fs::create_dir_all][39799]
+- [No longer caching stdio on Windows][40516]
+- [Changed how the `0` works in format!][40241] Padding zeroes are now always
+  placed after the sign if it exists and before the digits. With the `#` flag
+  the zeroes are placed after the prefix and before the digits.
+- [Optimized insertion sort in slice][40807] insertion sort in some cases
+  2.50%~ faster and in one case now 12.50% faster.
+- [`ThreadId` now implements `Hash` and `Debug`][41008]
+- [Optimized `AtomicBool::fetch_nand`][41143]
+
+
+Cargo
+-----
+
+- [Added Pijul support][cargo/3842] Pijul is a version control system in Rust.
+- [Now always emits build script warnings for crates that fail to build][cargo/3847]
+- [Added Android build support][cargo/3885]
+- [Added `--all-$KIND` flags][cargo/3901] now you can build all programs
+  of a certain type, for example `cargo build --all-bins` will build all
+  binaries.
+- [Test files are now allowed be named `test.rs`][cargo/3947]
+- [Added support for haiku][cargo/3952]
+
+Misc
+----
+
+- [rustdoc can now use pulldown-cmark with the `--enable-commonmark` flag][40338]
+- [Rustdoc added support for images, rules and footnotes in Markdown][40919]
+- [Added rust-winbg script for better debugging on Windows][39983]
+- [Rust now uses the official cross compiler for NetBSD][40612]
+- [rustdoc now accepts `#` at the start of files][40828]
+- [Fixed jemalloc support for musl][41168]
+
+Compatibility Notes
+-------------------
+
+- [The refactor of trait object type parsing][40043] fixed a bug where `+` was
+  receiving the wrong priority parsing things like `&for<'a> Tr<'a> + Send` as
+  `&(for<'a> Tr<'a> + Send)` instead of `(&for<'a> Tr<'a>) + Send`
+- [Overlapping inherent impls are now a hard error][40728]
+- [`rustc main.rs -o out --emit=asm,llvm-ir`][41085] Now would output
+  `out.asm` and `out.ll` instead of only one of the filetypes.
+
+
+[38165]: https://github.com/rust-lang/rust/pull/38165
+[39799]: https://github.com/rust-lang/rust/pull/39799
+[39891]: https://github.com/rust-lang/rust/pull/39891
+[39983]: https://github.com/rust-lang/rust/pull/39983
+[40043]: https://github.com/rust-lang/rust/pull/40043
+[40123]: https://github.com/rust-lang/rust/pull/40123
+[40241]: https://github.com/rust-lang/rust/pull/40241
+[40338]: https://github.com/rust-lang/rust/pull/40338
+[40367]: https://github.com/rust-lang/rust/pull/40367
+[40409]: https://github.com/rust-lang/rust/pull/40409
+[40516]: https://github.com/rust-lang/rust/pull/40516
+[40556]: https://github.com/rust-lang/rust/pull/40556
+[40561]: https://github.com/rust-lang/rust/pull/40561
+[40589]: https://github.com/rust-lang/rust/pull/40589
+[40612]: https://github.com/rust-lang/rust/pull/40612
+[40723]: https://github.com/rust-lang/rust/pull/40723
+[40728]: https://github.com/rust-lang/rust/pull/40728
+[40731]: https://github.com/rust-lang/rust/pull/40731
+[40734]: https://github.com/rust-lang/rust/pull/40734
+[40807]: https://github.com/rust-lang/rust/pull/40807
+[40828]: https://github.com/rust-lang/rust/pull/40828
+[40870]: https://github.com/rust-lang/rust/pull/40870
+[40919]: https://github.com/rust-lang/rust/pull/40919
+[41008]: https://github.com/rust-lang/rust/pull/41008
+[41143]: https://github.com/rust-lang/rust/pull/41143
+[41168]: https://github.com/rust-lang/rust/pull/41168
+[41469]: https://github.com/rust-lang/rust/pull/41469
+[41085]: https://github.com/rust-lang/rust/pull/41085
+[cargo/3842]: https://github.com/rust-lang/cargo/pull/3842
+[cargo/3847]: https://github.com/rust-lang/cargo/pull/3847
+[cargo/3885]: https://github.com/rust-lang/cargo/pull/3885
+[cargo/3901]: https://github.com/rust-lang/cargo/pull/3901
+[cargo/3947]: https://github.com/rust-lang/cargo/pull/3947
+[cargo/3952]: https://github.com/rust-lang/cargo/pull/3952
+
 Version 1.17.0 (2017-04-27)
 ===========================
 
