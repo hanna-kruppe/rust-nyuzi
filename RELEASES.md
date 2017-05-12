@@ -43,7 +43,6 @@ Libraries
   the zeroes are placed after the prefix and before the digits.
 - [Optimized insertion sort in slice][40807] insertion sort in some cases
   2.50%~ faster and in one case now 12.50% faster.
-- [`ThreadId` now implements `Hash` and `Debug`][41008]
 - [Optimized `AtomicBool::fetch_nand`][41143]
 
 
@@ -104,7 +103,6 @@ Compatibility Notes
 [40828]: https://github.com/rust-lang/rust/pull/40828
 [40870]: https://github.com/rust-lang/rust/pull/40870
 [40919]: https://github.com/rust-lang/rust/pull/40919
-[41008]: https://github.com/rust-lang/rust/pull/41008
 [41143]: https://github.com/rust-lang/rust/pull/41143
 [41168]: https://github.com/rust-lang/rust/pull/41168
 [41469]: https://github.com/rust-lang/rust/pull/41469
