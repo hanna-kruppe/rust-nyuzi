@@ -23,7 +23,8 @@ Compiler
 - [rustc can now emit mir with `--emit mir`][39891]
 - [Improved LLVM IR for trivial functions][40367]
 - [Added explanation for E0090(Wrong number of lifetimes are supplied)][40723]
-- [Rustc is now 15%-20% faster][41469]
+- [rustc compliation is now 15%-20% faster][41469] Thanks to optimisation
+  opportunities found through profiling
 - [Improved backtrace formatting when panicking][38165]
 
 Libraries
