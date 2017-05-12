@@ -49,7 +49,8 @@ Libraries
 Cargo
 -----
 
-- [Added Pijul support][cargo/3842] Pijul is a version control system in Rust.
+- [Added partial Pijul support][cargo/3842] Pijul is a version control system in Rust.
+  You can now create new cargo projects with Pijul using `cargo new --vcs pijul`
 - [Now always emits build script warnings for crates that fail to build][cargo/3847]
 - [Added Android build support][cargo/3885]
 - [Added `--all-$KIND` flags][cargo/3901] now you can build all programs
