@@ -37,9 +37,6 @@ Libraries
 - [Specialize Vec::from_elem to use calloc][40409]
 - [Fixed Race condition in fs::create_dir_all][39799]
 - [No longer caching stdio on Windows][40516]
-- [Changed how the `0` works in format!][40241] Padding zeroes are now always
-  placed after the sign if it exists and before the digits. With the `#` flag
-  the zeroes are placed after the prefix and before the digits.
 - [Optimized insertion sort in slice][40807] insertion sort in some cases
   2.50%~ faster and in one case now 12.50% faster.
 - [Optimized `AtomicBool::fetch_nand`][41143]
@@ -72,7 +69,7 @@ Misc
 ----
 
 - [rustdoc can now use pulldown-cmark with the `--enable-commonmark` flag][40338]
-- [Rustdoc added support for images, rules and footnotes in Markdown][40919]
+- [rustdoc added support for images, rules and footnotes in Markdown][40919]
 - [Added rust-winbg script for better debugging on Windows][39983]
 - [Rust now uses the official cross compiler for NetBSD][40612]
 - [rustdoc now accepts `#` at the start of files][40828]
@@ -81,6 +78,9 @@ Misc
 Compatibility Notes
 -------------------
 
+- [Changes to how the `0` flag works in format!][40241] Padding zeroes are now
+  always placed after the sign if it exists and before the digits. With the `#`
+  flag the zeroes are placed after the prefix and before the digits.
 - [The refactor of trait object type parsing][40043] fixed a bug where `+` was
   receiving the wrong priority parsing things like `&for<'a> Tr<'a> + Send` as
   `&(for<'a> Tr<'a> + Send)` instead of `(&for<'a> Tr<'a>) + Send`
