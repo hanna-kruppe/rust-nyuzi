@@ -19,7 +19,6 @@ Language
 Compiler
 --------
 
-- [LLVM backend upgraded to 4.0][40123]
 - [rustc can now emit mir with `--emit mir`][39891]
 - [Improved LLVM IR for trivial functions][40367]
 - [Added explanation for E0090(Wrong number of lifetimes are supplied)][40723]
@@ -64,10 +63,9 @@ Cargo
   You can now create new cargo projects with Pijul using `cargo new --vcs pijul`
 - [Now always emits build script warnings for crates that fail to build][cargo/3847]
 - [Added Android build support][cargo/3885]
-- [Added `--all-$KIND` flags][cargo/3901] now you can build all programs
-  of a certain type, for example `cargo build --all-bins` will build all
+- [Added `--bins` and `--tests` flags][cargo/3901] now you can build all programs
+  of a certain type, for example `cargo build --bins` will build all
   binaries.
-- [Test files are now allowed be named `test.rs`][cargo/3947]
 - [Added support for haiku][cargo/3952]
 
 Misc
@@ -96,7 +94,6 @@ Compatibility Notes
 [39891]: https://github.com/rust-lang/rust/pull/39891
 [39983]: https://github.com/rust-lang/rust/pull/39983
 [40043]: https://github.com/rust-lang/rust/pull/40043
-[40123]: https://github.com/rust-lang/rust/pull/40123
 [40241]: https://github.com/rust-lang/rust/pull/40241
 [40338]: https://github.com/rust-lang/rust/pull/40338
 [40367]: https://github.com/rust-lang/rust/pull/40367
@@ -122,7 +119,6 @@ Compatibility Notes
 [cargo/3847]: https://github.com/rust-lang/cargo/pull/3847
 [cargo/3885]: https://github.com/rust-lang/cargo/pull/3885
 [cargo/3901]: https://github.com/rust-lang/cargo/pull/3901
-[cargo/3947]: https://github.com/rust-lang/cargo/pull/3947
 [cargo/3952]: https://github.com/rust-lang/cargo/pull/3952
 [`TryFrom`]: https://doc.rust-lang.org/std/convert/trait.TryFrom.html
 [`TryInto`]: https://doc.rust-lang.org/std/convert/trait.TryInto.html
