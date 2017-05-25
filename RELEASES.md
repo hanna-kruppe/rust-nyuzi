@@ -44,14 +44,13 @@ Libraries
 Stabilized APIs
 ---------------
 
-- [`TryFrom`]
-- [`TryInto`]
+- [`Child::try_wait`]
 - [`HashMap::retain`]
 - [`HashSet::retain`]
+- [`PeekMut::pop`]
 - [`TcpSteam::peek`]
 - [`UdpSocket::peek`]
 - [`UdpSocket::peek_from`]
-- [`Child::try_wait`]
 
 Cargo
 -----
@@ -84,10 +83,20 @@ Compatibility Notes
 - [The refactor of trait object type parsing][40043] fixed a bug where `+` was
   receiving the wrong priority parsing things like `&for<'a> Tr<'a> + Send` as
   `&(for<'a> Tr<'a> + Send)` instead of `(&for<'a> Tr<'a>) + Send`
-- [Overlapping inherent impls are now a hard error][40728]
+- [Overlapping inherent `impl`s are now a hard error][40728]
+- [`PartialOrd` and `Ord` must to agree on the ordering.][41270]
 - [`rustc main.rs -o out --emit=asm,llvm-ir`][41085] Now would output
   `out.asm` and `out.ll` instead of only one of the filetypes.
-
+- [ calling a function that returns `Self` will no longer work][41805] when
+  the size of `Self` cannot be statically determined.
+- [rustc now builds with a "pthreads" flavour of MinGW for Windows GNU][40805]
+  this has caused a few regressions namely:
+  
+  - Changed the link order of local static/dynamic libraries (respecting the
+    order on given rather than having the compiler reorder).
+  - Changed how MinGW is linked, native code linked to dynamic libraries
+    may require manually linking to the gcc support library (for the native
+    code itself)
 
 [38165]: https://github.com/rust-lang/rust/pull/38165
 [39799]: https://github.com/rust-lang/rust/pull/39799
@@ -115,15 +124,17 @@ Compatibility Notes
 [41168]: https://github.com/rust-lang/rust/pull/41168
 [41469]: https://github.com/rust-lang/rust/pull/41469
 [41085]: https://github.com/rust-lang/rust/pull/41085
+[41805]: https://github.com/rust-lang/rust/issues/41805
+[40805]: https://github.com/rust-lang/rust/pull/40805
+[41270]: https://github.com/rust-lang/rust/issues/41270
 [cargo/3842]: https://github.com/rust-lang/cargo/pull/3842
 [cargo/3847]: https://github.com/rust-lang/cargo/pull/3847
 [cargo/3885]: https://github.com/rust-lang/cargo/pull/3885
 [cargo/3901]: https://github.com/rust-lang/cargo/pull/3901
 [cargo/3952]: https://github.com/rust-lang/cargo/pull/3952
-[`TryFrom`]: https://doc.rust-lang.org/std/convert/trait.TryFrom.html
-[`TryInto`]: https://doc.rust-lang.org/std/convert/trait.TryInto.html
 [`HashMap::retain`]: https://doc.rust-lang.org/std/collections/struct.HashMap.html#method.retain
 [`HashSet::retain`]: https://doc.rust-lang.org/std/collections/struct.HashSet.html#method.retain
+[`PeekMut::pop`]: https://doc.rust-lang.org/std/collections/binary_heap/struct.PeekMut.html#method.pop
 [`TcpSteam::peek`]: https://doc.rust-lang.org/std/net/struct.TcpStream.html#method.peek
 [`UdpSocket::peek`]: https://doc.rust-lang.org/std/net/struct.UdpSocket.html#method.peek
 [`UdpSocket::peek_from`]: https://doc.rust-lang.org/std/net/struct.UdpSocket.html#method.peek_from
