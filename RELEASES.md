@@ -15,6 +15,9 @@ Language
   and better error reporting for trait objects starting with `?Sized`.
 - [0e+10 is now a valid floating point literal][40589]
 - [Now warns if you bind a lifetime parameter to 'static][40734]
+- [Tuples, Enum variant fields, and structs with no `repr` attribute or with
+  `#[repr(Rust)]` are reordered to minimize padding and produce a smaller
+  representation in some cases.][40377]
 
 Compiler
 --------
@@ -68,7 +71,8 @@ Misc
 ----
 
 - [rustdoc can now use pulldown-cmark with the `--enable-commonmark` flag][40338]
-- [rustdoc added support for images, rules and footnotes in Markdown][40919]
+- [fixed a regression in rustdoc with images, rules and footnotes in Markdown not
+  being parsed correctly][40919]
 - [Added rust-winbg script for better debugging on Windows][39983]
 - [Rust now uses the official cross compiler for NetBSD][40612]
 - [rustdoc now accepts `#` at the start of files][40828]
@@ -80,12 +84,14 @@ Compatibility Notes
 - [Changes to how the `0` flag works in format!][40241] Padding zeroes are now
   always placed after the sign if it exists and before the digits. With the `#`
   flag the zeroes are placed after the prefix and before the digits.
+- [Due to to the Struct Field Optimisation][40377], using `transmute` on structs
+  that have no `repr` attribute or `#[repr(Rust)]` will longer work.
 - [The refactor of trait object type parsing][40043] fixed a bug where `+` was
   receiving the wrong priority parsing things like `&for<'a> Tr<'a> + Send` as
   `&(for<'a> Tr<'a> + Send)` instead of `(&for<'a> Tr<'a>) + Send`
 - [Overlapping inherent `impl`s are now a hard error][40728]
 - [`PartialOrd` and `Ord` must to agree on the ordering.][41270]
-- [`rustc main.rs -o out --emit=asm,llvm-ir`][41085] Now would output
+- [`rustc main.rs -o out --emit=asm,llvm-ir`][41085] Now will output
   `out.asm` and `out.ll` instead of only one of the filetypes.
 - [ calling a function that returns `Self` will no longer work][41805] when
   the size of `Self` cannot be statically determined.
@@ -127,6 +133,7 @@ Compatibility Notes
 [41805]: https://github.com/rust-lang/rust/issues/41805
 [40805]: https://github.com/rust-lang/rust/pull/40805
 [41270]: https://github.com/rust-lang/rust/issues/41270
+[40377]: https://github.com/rust-lang/rust/pull/40377
 [cargo/3842]: https://github.com/rust-lang/cargo/pull/3842
 [cargo/3847]: https://github.com/rust-lang/cargo/pull/3847
 [cargo/3885]: https://github.com/rust-lang/cargo/pull/3885
