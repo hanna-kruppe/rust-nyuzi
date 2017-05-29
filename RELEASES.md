@@ -84,7 +84,7 @@ Compatibility Notes
 - [Changes to how the `0` flag works in format!][40241] Padding zeroes are now
   always placed after the sign if it exists and before the digits. With the `#`
   flag the zeroes are placed after the prefix and before the digits.
-- [Due to to the Struct Field Optimisation][40377], using `transmute` on structs
+- [Due to the struct field optimisation][40377], using `transmute` on structs
   that have no `repr` attribute or `#[repr(Rust)]` will longer work.
 - [The refactor of trait object type parsing][40043] fixed a bug where `+` was
   receiving the wrong priority parsing things like `&for<'a> Tr<'a> + Send` as
