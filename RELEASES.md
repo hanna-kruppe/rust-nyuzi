@@ -71,8 +71,6 @@ Misc
 ----
 
 - [rustdoc can now use pulldown-cmark with the `--enable-commonmark` flag][40338]
-- [fixed a regression in rustdoc with images, rules and footnotes in Markdown not
-  being parsed correctly][40919]
 - [Added rust-winbg script for better debugging on Windows][39983]
 - [Rust now uses the official cross compiler for NetBSD][40612]
 - [rustdoc now accepts `#` at the start of files][40828]
@@ -125,7 +123,6 @@ Compatibility Notes
 [40807]: https://github.com/rust-lang/rust/pull/40807
 [40828]: https://github.com/rust-lang/rust/pull/40828
 [40870]: https://github.com/rust-lang/rust/pull/40870
-[40919]: https://github.com/rust-lang/rust/pull/40919
 [41143]: https://github.com/rust-lang/rust/pull/41143
 [41168]: https://github.com/rust-lang/rust/pull/41168
 [41469]: https://github.com/rust-lang/rust/pull/41469
