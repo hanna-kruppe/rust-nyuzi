@@ -502,19 +502,6 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
             })
         }
 
-        if cgcx.spmd {
-            assert!(addpass("lowerswitch"));
-            assert!(addpass("mergereturn"));
-            assert!(addpass("loop-simplify"));
-            assert!(addpass("lowerspmd"));
-            // FIXME(rkruppe) figure out a sensible set of passes
-            // for cleaning up after SPMD lowering
-            assert!(addpass("instcombine"));
-            assert!(addpass("adce"));
-            assert!(addpass("simplifycfg"));
-            assert!(addpass("globaldce"));
-        }
-
         for pass in &config.passes {
             if !addpass(pass) {
                 cgcx.handler.warn(&format!("unknown pass `{}`, ignoring",
@@ -541,6 +528,34 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
         // Deallocate managers that we're now done with
         llvm::LLVMDisposePassManager(fpm);
         llvm::LLVMDisposePassManager(mpm);
+
+        if cgcx.spmd {
+            let pm = llvm::LLVMCreatePassManager();
+            let add_spmd_pass = |pass_name: &str| {
+                let pass_name = CString::new(pass_name).unwrap();
+                let pass = llvm::LLVMRustFindAndCreatePass(pass_name.as_ptr());
+                if pass.is_null() {
+                    return false;
+                }
+                llvm::LLVMRustAddPass(pm, pass);
+                true
+            };
+
+            assert!(add_spmd_pass("lowerswitch"));
+            assert!(add_spmd_pass("mergereturn"));
+            assert!(add_spmd_pass("loop-simplify"));
+            assert!(add_spmd_pass("lowerspmd"));
+            // FIXME(rkruppe) figure out a sensible set of passes
+            // for cleaning up after SPMD lowering
+            assert!(add_spmd_pass("instcombine"));
+            assert!(add_spmd_pass("adce"));
+            assert!(add_spmd_pass("simplifycfg"));
+            assert!(add_spmd_pass("globaldce"));
+
+            time(config.time_passes, &format!("llvm SPMD lowering passes [{}]", cgcx.worker),
+                 || llvm::LLVMRunPassManager(pm, llmod));
+            llvm::LLVMDisposePassManager(pm);
+        }
 
         match cgcx.lto_ctxt {
             Some((sess, exported_symbols)) if sess.lto() =>  {
