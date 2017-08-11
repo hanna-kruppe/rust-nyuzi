@@ -558,6 +558,10 @@ extern "C" void LLVMRustAddAlwaysInlinePass(LLVMPassManagerBuilderRef PMBR,
 #endif
 }
 
+extern "C" void LLVMRustEnableSPMDVectorize(LLVMPassManagerBuilderRef PMBR) {
+  unwrap(PMBR)->SPMDVectorize = true;
+}
+
 extern "C" void LLVMRustRunRestrictionPass(LLVMModuleRef M, char **Symbols,
                                            size_t Len) {
   llvm::legacy::PassManager passes;

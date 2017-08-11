@@ -190,7 +190,7 @@ pub fn run(sess: &session::Session,
         assert!(!pass.is_null());
         llvm::LLVMRustAddPass(pm, pass);
 
-        with_llvm_pmb(llmod, config, &mut |b| {
+        with_llvm_pmb(llmod, config, false, &mut |b| {
             llvm::LLVMPassManagerBuilderPopulateLTOPassManager(b, pm,
                 /* Internalize = */ False,
                 /* RunInliner = */ True);

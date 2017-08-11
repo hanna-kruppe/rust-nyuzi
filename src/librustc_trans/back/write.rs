@@ -496,7 +496,7 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
         if !config.no_prepopulate_passes {
             llvm::LLVMRustAddAnalysisPasses(tm, fpm, llmod);
             llvm::LLVMRustAddAnalysisPasses(tm, mpm, llmod);
-            with_llvm_pmb(llmod, &config, &mut |b| {
+            with_llvm_pmb(llmod, &config, cgcx.spmd, &mut |b| {
                 llvm::LLVMPassManagerBuilderPopulateFunctionPassManager(b, fpm);
                 llvm::LLVMPassManagerBuilderPopulateModulePassManager(b, mpm);
             })
@@ -528,34 +528,6 @@ unsafe fn optimize_and_codegen(cgcx: &CodegenContext,
         // Deallocate managers that we're now done with
         llvm::LLVMDisposePassManager(fpm);
         llvm::LLVMDisposePassManager(mpm);
-
-        if cgcx.spmd {
-            let pm = llvm::LLVMCreatePassManager();
-            let add_spmd_pass = |pass_name: &str| {
-                let pass_name = CString::new(pass_name).unwrap();
-                let pass = llvm::LLVMRustFindAndCreatePass(pass_name.as_ptr());
-                if pass.is_null() {
-                    return false;
-                }
-                llvm::LLVMRustAddPass(pm, pass);
-                true
-            };
-
-            assert!(add_spmd_pass("lowerswitch"));
-            assert!(add_spmd_pass("mergereturn"));
-            assert!(add_spmd_pass("loop-simplify"));
-            assert!(add_spmd_pass("lowerspmd"));
-            // FIXME(rkruppe) figure out a sensible set of passes
-            // for cleaning up after SPMD lowering
-            assert!(add_spmd_pass("instcombine"));
-            assert!(add_spmd_pass("adce"));
-            assert!(add_spmd_pass("simplifycfg"));
-            assert!(add_spmd_pass("globaldce"));
-
-            time(config.time_passes, &format!("llvm SPMD lowering passes [{}]", cgcx.worker),
-                 || llvm::LLVMRunPassManager(pm, llmod));
-            llvm::LLVMDisposePassManager(pm);
-        }
 
         match cgcx.lto_ctxt {
             Some((sess, exported_symbols)) if sess.lto() =>  {
@@ -1186,6 +1158,7 @@ pub fn run_assembler(sess: &Session, outputs: &OutputFilenames) {
 
 pub unsafe fn with_llvm_pmb(llmod: ModuleRef,
                             config: &ModuleConfig,
+                            spmd: bool,
                             f: &mut FnMut(llvm::PassManagerBuilderRef)) {
     // Create the PassManagerBuilder for LLVM. We configure it with
     // reasonable defaults and prepare it to actually populate the pass
@@ -1236,6 +1209,9 @@ pub unsafe fn with_llvm_pmb(llmod: ModuleRef,
         (llvm::CodeGenOptLevel::Other, ..) => {
             bug!("CodeGenOptLevel::Other selected")
         }
+    }
+    if spmd {
+        llvm::LLVMRustEnableSPMDVectorize(builder);
     }
 
     f(builder);

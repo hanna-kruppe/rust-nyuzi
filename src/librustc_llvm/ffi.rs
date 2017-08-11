@@ -1599,6 +1599,7 @@ extern "C" {
     pub fn LLVMRustPrintPasses();
     pub fn LLVMRustSetNormalizedTarget(M: ModuleRef, triple: *const c_char);
     pub fn LLVMRustAddAlwaysInlinePass(P: PassManagerBuilderRef, AddLifetimes: bool);
+    pub fn LLVMRustEnableSPMDVectorize(P: PassManagerBuilderRef);
     pub fn LLVMRustLinkInExternalBitcode(M: ModuleRef, bc: *const c_char, len: size_t) -> bool;
     pub fn LLVMRustRunRestrictionPass(M: ModuleRef, syms: *const *const c_char, len: size_t);
     pub fn LLVMRustMarkAllFunctionsNounwind(M: ModuleRef);
