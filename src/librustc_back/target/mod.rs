@@ -219,6 +219,8 @@ supported_targets! {
     ("thumbv7m-none-eabi", thumbv7m_none_eabi),
     ("thumbv7em-none-eabi", thumbv7em_none_eabi),
     ("thumbv7em-none-eabihf", thumbv7em_none_eabihf),
+
+    ("nyuzi-elf-none", nyuzi_elf_none),
 }
 
 /// Everything `rustc` knows about how to compile for a specific target.
@@ -851,6 +853,7 @@ impl ToJson for Target {
         target_option_val!(max_atomic_width);
         target_option_val!(panic_strategy);
         target_option_val!(crt_static_default);
+        target_option_val!(spmd);
 
         if default.abi_blacklist != self.options.abi_blacklist {
             d.insert("abi-blacklist".to_string(), self.options.abi_blacklist.iter()
